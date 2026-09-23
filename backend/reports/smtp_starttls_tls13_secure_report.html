@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SecureMailScope Forensic Report — smtp_starttls_tls13_secure.pcap</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:2rem;background:#0b0c15;color:#e8e8ec;line-height:1.45}
+.container{max-width:960px;margin:auto}
+h1{font-size:1.8rem;border-bottom:3px solid #e2b03a;padding-bottom:.5rem}
+h2{font-size:1.2rem;color:#e2b03a;margin-top:2rem}
+.card{background:#101127;border:1px solid #23263a;border-radius:8px;padding:1rem;margin:1rem 0}
+.tag{display:inline-block;padding:.15rem .4rem;border-radius:4px;font-size:.8rem;font-weight:600}
+.tag-critical{background:#8b2e2e;color:#fff}
+.tag-poor{background:#b8860b;color:#fff}
+.tag-good{background:#2e7a3e;color:#fff}
+.tag-excellent{background:#1a7a3e;color:#fff}
+code{background:#181b2a;padding:.15rem .3rem;border-radius:4px;font-family:monospace}
+pre{background:#181b2a;padding:1rem;border-radius:6px;overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:.55rem .3rem;border-bottom:1px solid #23263a}
+th{color:#e2b03a}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>SecureMailScope Forensic Report</h1>
+<p><strong>Capture:</strong> <code>smtp_starttls_tls13_secure.pcap</code> &nbsp;|&nbsp; <strong>SHA-256:</strong> <code>44a2f96f74cbce8ead5bfafe0ebf0ee4...</code></p>
+<p><strong>Generated:</strong> 2026-09-16 17:15:57 UTC &nbsp;|&nbsp; <strong>Policy:</strong> v1.0 &nbsp;|&nbsp; <strong>Tool:</strong> SecureMailScope 0.1.0</p>
+
+<div class="card">
+<h2>1. Executive Summary</h2>
+<p>Security Posture: 88/100 (Good)<br>Sessions analyzed: 1<br>TLS sessions: 1<br>Findings: 1<br><br>Dimension Scores:<br>  TLS Protocol: 100/100<br>  Cryptographic Algorithms: 100/100<br>  Certificate Security: 88/100<br>  STARTTLS Security: 100/100<br>  Protocol Security: 100/100<br><br>Top Contributors:<br>  1. Self-Signed Certificate (MEDIUM): 0 sessions, 0.0% prevalence</p>
+<p><strong>Overall Posture:</strong> <span class="tag tag-good">88/100 — Good</span></p>
+<p><strong>Findings:</strong> 1 &nbsp;|&nbsp; <strong>Sessions with findings:</strong> 1 &nbsp;|&nbsp; <strong>Total sessions:</strong> 1 &nbsp;|&nbsp; <strong>TLS sessions:</strong> 1</p>
+<p><strong>Coverage — TLS:</strong> 0% &nbsp;|&nbsp; <strong>Certificate:</strong> 100%</p>
+</div>
+
+<div class="card">
+<h2>2. Capture Metadata</h2>
+<table>
+<tr><th>Property</th><th>Value</th></tr>
+<tr><td>Filename</td><td>smtp_starttls_tls13_secure.pcap</td></tr>
+<tr><td>Full path</td><td><code>tests/robustness/fixtures/pcaps/smtp_starttls_tls13_secure.pcap</code></td></tr>
+<tr><td>SHA-256</td><td><code>44a2f96f74cbce8ead5bfafe0ebf0ee4c320f97d9c3e9855f509d417a0236948</code></td></tr>
+<tr><td>Analysis timestamp</td><td>2026-09-16 17:15:57 UTC</td></tr>
+<tr><td>Scoring policy</td><td>v1.0</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>3. Security Posture — Dimension Scores</h2>
+<table>
+<tr><th>Dimension</th><th>Score</th><th>Weight</th><th>Findings</th><th>Coverage</th></tr>
+<tr><td>TLS Protocol</td><td>100/100</td><td>20%</td><td>0</td><td>100%</td></tr><tr><td>Cryptographic Algorithms</td><td>100/100</td><td>15%</td><td>0</td><td>100%</td></tr><tr><td>Certificate Security</td><td>88/100</td><td>25%</td><td>1</td><td>100%</td></tr><tr><td>STARTTLS Security</td><td>100/100</td><td>20%</td><td>0</td><td>100%</td></tr><tr><td>Protocol Security</td><td>100/100</td><td>20%</td><td>0</td><td>100%</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>4. Findings &amp; Root-Cause Groups</h2>
+<p>Every finding is grouped by root cause to prevent double-counting. Prevalence scaling applied.</p>
+<ul>
+<li><strong>Self-Signed Certificate</strong> (MEDIUM) — 0 sessions (0.0%) — finding count: 1</li>
+
+</ul>
+</div>
+
+<div class="card">
+<h2>5. Top Contributors (Evidence-Based Impact)</h2>
+<p>The highest-impact root causes driving the posture score down:</p>
+<ol>
+<li><strong>Self-Signed Certificate</strong> (MEDIUM) — 0 sessions, 0% prevalence, impact 12.0 pts — Self-Signed Certificate (MEDIUM) affecting 0 sessions reduces posture score by 12.0 points</li>
+</ol>
+</div>
+
+<div class="card">
+<h2>6. Evidence Quality &amp; Coverage</h2>
+<p><strong>OBSERVED</strong> — Full TLS/certificate evidence present. <strong>INFERRED</strong> — Derived from packet-level analysis. <strong>NOT OBSERVED</strong> — Property not present in capture. <strong>INSUFFICIENT</strong> — Not enough data to assess.</p>
+<p>Evidence quality is tracked per dimension. Missing evidence does <strong>not</strong> produce false penalties.</p>
+</div>
+
+<div class="card">
+<h2>7. Protocol Distribution (Summary)</h2>
+<p>Protocol-level statistics are derived from the M1-M8 engine and reported as part of the forensic pipeline. For detailed protocol statistics, refer to the raw analysis output.</p>
+</div>
+
+<div class="card">
+<h2>8. Recommendations</h2>
+<ul>
+<li><strong>Deprecated TLS versions</strong> — Upgrade server/client configurations to TLS 1.3 (or at minimum TLS 1.2 with modern cipher suites).</li>
+<li><strong>Expired certificates</strong> — Renew certificates before expiration; implement automated renewal (ACME / cert-manager).</li>
+<li><strong>Weak public key / self-signed</strong> — Use RSA 2048+ or EC P-256+; replace self-signed with a trusted CA-issued certificate.</li>
+<li><strong>Missing forward secrecy</strong> — Configure cipher suites that include ECDHE or DHE for ephemeral key exchange.</li>
+<li><strong>Unencrypted/STARTTLS rejected</strong> — Enforce TLS for all email protocols; reject plaintext fallback.</li>
+</ul>
+</div>
+
+<div class="card">
+<h2>9. Coverage / Limitations</h2>
+<p><strong>Limitations:</strong> Analysis depends on the completeness of the packet capture. Partial captures (missing handshake segments, truncated TLS records) reduce evidence quality to PARTIAL or INSUFFICIENT without falsely penalizing posture. Synthetic test fixtures are explicitly labeled where used for validation.</p>
+<p><strong>Determinism:</strong> The same input capture with identical M8 findings produces an identical M9 score.</p>
+<p><strong>Policy version:</strong> 1.0</p>
+</div>
+
+<hr style="border:1px solid #23263a;margin:2rem 0">
+<p style="font-size:.85rem;color:#777">SecureMailScope M10 — Forensic Report — Generated offline (no external server required).</p>
+</div>
+</body>
+</html>

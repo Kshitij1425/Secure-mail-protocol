@@ -1,0 +1,11 @@
+{
+  "name": "smtp_starttls_downgrade",
+  "expected_protocol": "SMTP",
+  "expected_tls": false,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "STLS-001",
+    "PROTO-001"
+  ],
+  "expected_anomalies": []
+}

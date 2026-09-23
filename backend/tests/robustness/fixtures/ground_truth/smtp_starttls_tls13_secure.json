@@ -1,0 +1,10 @@
+{
+  "name": "smtp_starttls_tls13_secure",
+  "expected_protocol": "SMTP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "CERT-005"
+  ],
+  "expected_anomalies": []
+}

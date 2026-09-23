@@ -1,0 +1,11 @@
+{
+  "name": "pop3_starttls_rejected",
+  "expected_protocol": "POP3",
+  "expected_tls": false,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "STLS-001",
+    "PROTO-001"
+  ],
+  "expected_anomalies": []
+}

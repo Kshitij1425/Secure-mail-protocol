@@ -1,0 +1,10 @@
+{
+  "name": "imap_starttls_tls12",
+  "expected_protocol": "IMAP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "CERT-005"
+  ],
+  "expected_anomalies": []
+}

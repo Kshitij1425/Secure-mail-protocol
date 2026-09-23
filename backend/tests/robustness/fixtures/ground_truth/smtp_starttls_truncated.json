@@ -1,0 +1,8 @@
+{
+  "name": "smtp_starttls_truncated",
+  "expected_protocol": "SMTP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [],
+  "expected_anomalies": []
+}

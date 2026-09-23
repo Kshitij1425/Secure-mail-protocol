@@ -1,0 +1,14 @@
+{
+  "name": "smtp_weak_deprecated",
+  "expected_protocol": "SMTP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "TLS-001",
+    "TLS-004",
+    "CERT-001",
+    "CERT-003",
+    "CERT-005"
+  ],
+  "expected_anomalies": []
+}

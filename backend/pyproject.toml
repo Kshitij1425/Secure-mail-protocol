@@ -1,0 +1,23 @@
+[project]
+name = "securemailscope"
+version = "0.1.0"
+description = "AI-assisted passive network forensic framework for email cryptographic posture"
+requires-python = ">=3.12"
+dependencies = [
+    "dpkt",
+    "scapy",
+    "cryptography",
+    "fastapi",
+    "uvicorn",
+    "sqlalchemy",
+    "pydantic",
+    "pydantic-settings",
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "jinja2"
+]
+
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"

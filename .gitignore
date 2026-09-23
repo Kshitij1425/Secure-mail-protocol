@@ -1,0 +1,12 @@
+# SecureMailScope
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+.DS_Store
+uploads/
+dist/
+frontend/node_modules/
+frontend/dist/

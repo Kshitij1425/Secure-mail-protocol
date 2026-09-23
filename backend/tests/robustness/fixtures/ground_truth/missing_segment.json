@@ -1,0 +1,10 @@
+{
+  "name": "missing_segment",
+  "expected_protocol": "SMTP",
+  "expected_tls": false,
+  "expected_reconstruction_quality": "partial",
+  "expected_findings": [
+    "PROTO-001"
+  ],
+  "expected_anomalies": []
+}

@@ -1,0 +1,10 @@
+{
+  "name": "clean_baseline",
+  "expected_protocol": "SMTP",
+  "expected_tls": false,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "PROTO-001"
+  ],
+  "expected_anomalies": []
+}
