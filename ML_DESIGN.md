@@ -1,104 +1,66 @@
-# SecureMailScope M11 — ML Anomaly Detection Design
+# ML Anomaly Detection - Design and Measured Behaviour
 
-**Status:** Validated in M14, supplementary only, no accuracy claims  
-**Model:** Isolation Forest (scikit-learn)  
-**Configuration:** contamination=0.1  
-**Seed:** Not fixed (unsupervised; deterministic when feature vector identical)  
+**Role:** supplementary. The ML stage never creates, removes or changes a deterministic
+finding and never affects the posture score (enforced in `core/orchestrator.py`: scoring
+consumes `all_findings` only; covered by `test_ml_flags_the_planted_outlier_only`).
 
----
+## Model
 
-## Purpose
+| Item | Value |
+|---|---|
+| Algorithm | scikit-learn `IsolationForest`, 100 trees |
+| Training | **Unsupervised, fitted per capture** on that capture's own TLS sessions. No external baseline, no labels, no persisted model. |
+| Eligible sessions | Email sessions whose TLS ServerHello was observed (negotiated version known) |
+| Minimum sessions | 5 (`MIN_ML_SESSIONS`). Below that the stage reports `insufficient_sessions (<5)` and produces no results. |
+| Threshold | `contamination="auto"` (score-based threshold, no forced outlier quota) |
+| Seed | `random_state=42` (fixed) |
+| Time reference | Capture start time (certificate age/validity features), so results do not change with the analysis date |
+| Model version string | `isolation-forest/1` (stored with every anomaly row) |
+| Scoring path | Batched `decision_function` (identical to per-session scoring; `test_batch_detection_matches_single_detection`) |
 
-M11 provides **supplementary diagnostic insight** into TLS session statistical patterns. It is **not** a ground-truth vulnerability detector and **never** overrides M8 deterministic findings or M9 posture scoring.
+## Features (10, `ml/feature_extractor.py`)
 
----
-
-## Feature Set (10 Dimensions)
-
-| # | Feature | Source | Description |
+| # | Feature | Source | Missing-data handling |
 |---|---|---|---|
-| 1 | `packet_count` | TCP stream | Total packets in session |
-| 2 | `duration` | TCP stream | Session duration (seconds) |
-| 3 | `tls_version_ordinal` | TLS parser | TLS version as integer (
-1.0→1, 1.2→3, 1.3→4) |
-| 4 | `cipher_strength` | TLS parser | Cipher strength score (0-1, 1=strongest) |
-| 5 | `has_forward_secrecy` | TLS parser | Boolean (1 if PFS cipher) |
-| 6 | `key_exchange` | TLS parser | Key exchange method |
-| 7 | `certificate_age_days` | Certificate analyzer | Days since certificate issue |
-| 8 | `signature_strength` | Certificate analyzer | Signature algorithm strength |
-| 9 | `public_key_size_bits` | Certificate analyzer | RSA key size |
-| 10 | `session_protocol` | Protocol detector | Protocol enum (SMTP/IMAP/POP3) |
+| 1 | `tls_version_ordinal` (SSLv2=0 ... TLS1.3=5) | ServerHello / supported_versions | Not applicable: only sessions with a negotiated version are evaluated |
+| 2 | `cipher_strength` (0-100 heuristic from suite name) | ServerHello | 50 if unknown |
+| 3 | `certificate_key_size` (bits) | Leaf certificate | 0 if no certificate observed (e.g. TLS 1.3) |
+| 4 | `certificate_age_days` at capture time | Leaf certificate | 0 if none |
+| 5 | `certificate_validity_days` remaining at capture time | Leaf certificate | 0 if none |
+| 6 | `session_duration_seconds` | TCP stream | - |
+| 7 | `packet_count` | TCP stream | - |
+| 8 | `has_forward_secrecy` (0/1) | Cipher classification / TLS 1.3 | 0 if unknown |
+| 9 | `signature_algorithm_strength` (0-100) | Leaf certificate | 50 if none |
+| 10 | `certificate_chain_depth` | Certificate message | 0 if none |
 
----
+Known weakness: "no certificate observed" (TLS 1.3) is encoded as zeros, so TLS 1.3
+sessions look unusual next to TLS 1.2 sessions in a mixed capture.
 
-## Training Procedure
+## Explanations
 
-1. **Extract all TLS sessions** from capture (via orchestrator session_data_for_ml)
-2. **Build feature matrix** (N × 10) where N = TLS session count
-3. **Train IsolationForest** with `contamination=0.1` (expect ~10% outliers in reference data)
-4. **Detect anomalies** per session using `detect_anomaly()`
-5. **Store results** in `AnomalyDB` with `is_anomaly` flag
+Each flagged session gets a level (mild / moderate / severe from the normalised decision
+score) and a *rareness* explanation naming the features whose values occur in <= 20% of
+the capture's sessions (e.g. `certificate_key_size=1024 (8% of sessions)`).
 
----
+## Measured results (not accuracy claims)
 
-## Configuration
+There is **no independent labelled dataset**, so no precision/recall/accuracy is claimed.
+The following are observations on the repository's synthetic-framing / real-OpenSSL fixtures:
 
-```python
-# From securemailscope/ml/anomaly_detector.py
-self.engine = IsolationForest(
-    contamination=0.1,
-    n_estimators=100,
-    max_samples='auto',
-    random_state=None  # Intentionally not fixed—unsupervised exploration
-)
-```
+| Capture | TLS sessions evaluated | Flagged | Notes |
+|---|---|---|---|
+| `ml_mixed_estate.pcap` (11 TLS 1.2 ECDHE + 1 TLS 1.0 RSA-1024) | 12 | 1 | The single flagged session is the planted TLS 1.0 outlier |
+| Benchmark estate, 2,000 packets | 79 | 24 (30%) | All 5 deterministically weak sessions flagged; 19 other flags are minority configurations (TLS 1.3, implicit TLS) |
+| Benchmark estate, 10,000 packets | 383 | 119 (31%) | All 24 weak sessions flagged; 95 other flags |
 
----
+Interpretation: on heterogeneous captures the detector highlights *minority
+configurations*, which is useful for triage ("which endpoints behave differently?") but it
+is **not** a vulnerability detector, and its flag rate on mixed estates is high. Repeat
+analysis of the same capture produced identical scores in every run.
 
-## Evaluation (Measured)
+## What would be needed for stronger claims
 
-### Dataset
-- 13 fixtures from `backend/tests/robustness/fixtures/pcaps/`
-- Mix of secure and weak configurations
-- No independently labeled ground truth dataset exists
-
-### Results (Observed)
-
-| Capture | TLS Sessions | Expected Anomalies | Detected | Notes |
-|---|---|---|---|---|
-| `clean_baseline.pcap` | 0 | 0 | 0 | No TLS—no ML evaluation |
-| `smtp_starttls_tls13_secure.pcap` | 1 | 0 | 0 | Normal session |
-| `smtp_weak_deprecated.pcap` | 1 | 1 | 1 | Weak cipher/deprecated TLS detected |
-
-**No false-negative claims made.** No accuracy metrics reported (no labeled dataset).
-
----
-
-## Limitations (Explicit)
-
-1. **No labeled dataset** → Accuracy, precision, recall undefined
-2. **Per-capture training** → No cross-capture learning
-3. **Contamination fixed at 10%** → Not tuned to dataset
-4. **Small sample per capture** → Often < 3 sessions (minimum for training)
-5. **No feature importance** → Black-box for analysts (feature breakdown shown in UI)
-6. **Supplementary only** → Never affects posture score or findings
-
----
-
-## UI Presentation
-
-`AnomaliesPage.tsx` displays:
-- **Supplementary banner:** "ML outputs are purely supplementary"
-- **Anomaly list:** Score, severity, session reference
-- **Feature breakdown:** All 10 dimensions for selected anomaly
-- **Explanation:** Heuristic explanation of outlier characteristics
-
----
-
-## Correctness Verification
-
-- M11 results never modify `CaptureDB.posture_score`
-- M11 results never modify `FindingDB` entries
-- `OverviewPage` shows ML anomaly count but does not alter posture display
-- `SessionsPage` shows `has_anomaly` flag independently from findings
-- All M11 outputs clearly marked with `is_anomaly` boolean
+* A labelled corpus of real mail-server captures (independent of the fixtures) to measure
+  precision/recall.
+* A persisted baseline model per organisation instead of per-capture fitting.
+* Encoding "not observable" explicitly (indicator features) instead of zeros.

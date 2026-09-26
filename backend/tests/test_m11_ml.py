@@ -601,3 +601,15 @@ def test_cipher_strength_edge_cases():
 
     # Unknown cipher (falls through to default)
     assert FeatureExtractor.extract_cipher_strength("UNKNOWN_CIPHER") == 70.0
+
+def test_batch_detection_matches_single_detection():
+    """The batched scoring path used by the pipeline must equal per-session detect()."""
+    detector = IsolationForestAnomalyDetector(contamination="auto")
+    sessions = [create_mock_session_features(f"s{i}", tls_version=5.0 if i % 9 else 2.0,
+                                             cipher_strength=95.0 if i % 9 else 25.0, packet_count=10.0 + i % 4)
+                for i in range(40)]
+    assert detector.fit(sessions)
+    batch = detector.detect_batch(sessions)
+    single = [detector.detect(s) for s in sessions]
+    assert [(b.is_anomaly, round(b.anomaly_score, 9), b.anomaly_level) for b in batch] == \
+           [(s.is_anomaly, round(s.anomaly_score, 9), s.anomaly_level) for s in single]

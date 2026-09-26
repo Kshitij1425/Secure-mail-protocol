@@ -4,11 +4,34 @@
   "expected_tls": true,
   "expected_reconstruction_quality": "complete",
   "expected_findings": [
-    "TLS-001",
-    "TLS-004",
     "CERT-001",
     "CERT-003",
-    "CERT-005"
+    "CERT-005",
+    "TLS-001",
+    "TLS-004"
   ],
-  "expected_anomalies": []
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "SMTP",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.0",
+      "findings": [
+        "CERT-001",
+        "CERT-003",
+        "CERT-005",
+        "TLS-001",
+        "TLS-004"
+      ],
+      "certificates": 1,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": "complete"
+    }
+  ],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "TLS 1.0 + TLS_RSA_WITH_AES_128_CBC_SHA (no forward secrecy); self-signed 1024-bit RSA certificate that expired 35 days before the capture."
 }

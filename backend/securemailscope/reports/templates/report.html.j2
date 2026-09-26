@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<meta name="referrer" content="no-referrer">
+<title>SecureMailScope Report - {{ doc.capture.filename }}</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:2rem;background:#fff;color:#1b1d24;line-height:1.45}
+.wrap{max-width:1100px;margin:auto}
+h1{font-size:1.6rem;margin:0 0 .25rem} h2{font-size:1.15rem;margin-top:2rem;border-bottom:2px solid #d9dbe4;padding-bottom:.25rem}
+.meta{color:#555;font-size:.85rem} code{font-family:ui-monospace,Consolas,monospace;font-size:.85em;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:.5rem} th,td{text-align:left;padding:.4rem;border-bottom:1px solid #e3e4ea;vertical-align:top}
+th{background:#f3f4f8}
+.sev{font-weight:700;padding:.05rem .35rem;border-radius:3px;font-size:.75rem}
+.CRITICAL{background:#fde2e2;color:#8a1111}.HIGH{background:#fdebd8;color:#8a4a00}.MEDIUM{background:#fdf6d6;color:#6b5600}.LOW{background:#e2f3e6;color:#1d5a2b}.INFO{background:#e8eaf0;color:#333}
+.score{font-size:2.2rem;font-weight:800} .note{background:#f6f7fb;border-left:4px solid #8a8fa8;padding:.6rem .8rem;font-size:.85rem}
+</style>
+</head>
+<body><div class="wrap">
+<h1>SecureMailScope - Email Cryptographic Posture Report</h1>
+<p class="meta">Capture <code>{{ doc.capture.filename }}</code> &middot; SHA-256 <code>{{ doc.capture.sha256 }}</code><br>
+Analyzed {{ doc.analysis.analyzed_at }} &middot; rule policy {{ doc.analysis.rule_policy_version }} &middot; scoring policy {{ doc.analysis.scoring_policy_version }} &middot; ML model {{ doc.analysis.ml_model_version or "n/a" }} &middot; tool {{ doc.tool.version }}</p>
+
+<h2>1. Executive summary</h2>
+{% set p = doc.posture %}
+<p><span class="score">{{ "n/a" if p.overall_score is none else "%.0f"|format(p.overall_score) }}</span>{% if p.overall_score is not none %}/100{% endif %} &mdash; <strong>{{ p.status }}</strong></p>
+<p>{{ doc.capture.email_sessions }} email session(s) &middot; {{ doc.capture.tls_sessions }} with TLS observed &middot; {{ doc.findings|length }} finding(s) &middot; {{ doc.anomalies|selectattr("is_anomaly")|list|length }} ML anomaly(ies) &middot; {{ doc.certificates|length }} certificate(s) observed</p>
+{% if p.overall_score is none %}<p class="note">No email session with assessable evidence was found, so no posture score is given (insufficient evidence is not treated as secure or insecure).</p>{% endif %}
+
+<h2>2. Capture metadata &amp; integrity</h2>
+<table><tr><th>Property</th><th>Value</th></tr>
+{% for k, v in doc.capture.items() %}<tr><td>{{ k }}</td><td><code>{{ v }}</code></td></tr>{% endfor %}
+</table>
+
+<h2>3. Posture by dimension</h2>
+<table><tr><th>Dimension</th><th>Score</th><th>Weight</th><th>Findings</th><th>Coverage</th><th>Evidence quality</th></tr>
+{% for d in p.dimensions %}<tr><td>{{ d.name }}</td><td>{{ "n/a" if d.score is none else "%.0f"|format(d.score) }}</td><td>{{ (d.weight*100)|round|int }}%</td><td>{{ d.findings_count }}</td><td>{{ d.coverage_percent }}%</td><td>{{ d.evidence_quality }}</td></tr>{% endfor %}
+</table>
+{% if p.top_contributors %}<p><strong>Largest score reductions</strong></p><ol>{% for c in p.top_contributors %}<li>{{ c.explanation }}</li>{% endfor %}</ol>{% endif %}
+
+<h2>4. Prioritised remediation</h2>
+{% if doc.remediation_plan %}
+<table><tr><th>#</th><th>Issue</th><th>Severity</th><th>Sessions</th><th>Recommendation</th><th>References</th></tr>
+{% for r in doc.remediation_plan %}<tr><td>{{ r.priority }}</td><td>{{ r.rule_id }} &ndash; {{ r.title }}</td><td><span class="sev {{ r.severity }}">{{ r.severity }}</span></td><td>{{ r.affected_sessions }}</td><td>{{ r.recommendation }}</td><td>{{ r.references }}</td></tr>{% endfor %}
+</table>
+{% else %}<p>No actionable findings.</p>{% endif %}
+
+<h2>5. Findings (deterministic rules)</h2>
+{% if doc.findings %}
+<table><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>Evidence class</th><th>Session</th><th>Frames</th></tr>
+{% for f in doc.findings %}<tr><td><span class="sev {{ f.severity }}">{{ f.severity }}</span></td><td>{{ f.rule_id }}</td><td><strong>{{ f.title }}</strong><br>{{ f.description }}<br><code>{{ f.evidence|tojson }}</code></td><td>{{ f.evidence_type }}</td><td><code>{{ f.session_id }}</code></td><td>{{ f.evidence_frames|join(", ") or "-" }}</td></tr>{% endfor %}
+</table>
+{% else %}<p>No findings.</p>{% endif %}
+
+<h2>6. Email sessions</h2>
+<table><tr><th>Client &rarr; Server</th><th>Protocol</th><th>STARTTLS</th><th>TLS</th><th>Cipher / KX</th><th>Certs</th><th>TCP quality</th></tr>
+{% for s in doc.sessions %}<tr><td><code>{{ s.client.ip }}:{{ s.client.port }} &rarr; {{ s.server.ip }}:{{ s.server.port }}</code></td><td>{{ s.protocol }}{% if s.implicit_tls %} (implicit TLS){% endif %}</td><td>{{ s.starttls.final_state }}</td><td>{{ (s.tls or {}).negotiated_version or "not observed" }}<br><small>{{ (s.tls or {}).handshake_status or "" }}</small></td><td>{{ (s.tls or {}).cipher_suite or "-" }}<br><small>{{ (s.tls or {}).key_exchange_group or "" }}</small></td><td>{{ s.certificate_ids|length }}{% if s.tls and s.tls.certificate_visibility == "encrypted_tls13" %} (encrypted, TLS 1.3){% endif %}</td><td>{{ s.reconstruction.quality }}</td></tr>{% else %}<tr><td colspan="7">No email sessions.</td></tr>{% endfor %}
+</table>
+
+<h2>7. Certificates (observed on the wire; trust not evaluated)</h2>
+<table><tr><th>Subject / Issuer</th><th>Validity (at capture time)</th><th>Key / Signature</th><th>SAN</th><th>Linkage to next</th></tr>
+{% for c in doc.certificates %}<tr><td>{{ c.subject }}<br><small>issued by {{ c.issuer }}</small></td><td>{{ c.not_before }} &ndash; {{ c.not_after }}{% if c.is_expired %} <span class="sev HIGH">EXPIRED</span>{% endif %}{% if c.is_not_yet_valid %} <span class="sev HIGH">NOT YET VALID</span>{% endif %}</td><td>{{ c.public_key_algorithm }} {{ c.public_key_size_bits }} / {{ c.signature_algorithm }}</td><td>{{ c.san_list|join(", ") }}</td><td>{{ c.issued_by_next or "-" }}{% if c.is_self_signed %} (self-signed){% endif %}</td></tr>{% else %}<tr><td colspan="5">No certificates observed.</td></tr>{% endfor %}
+</table>
+
+<h2>8. ML anomalies (supplementary)</h2>
+<p class="note">Unsupervised Isolation Forest fitted on this capture's own TLS sessions ({{ (doc.ml or {}).status }}). Anomalies are statistical outliers, not confirmed vulnerabilities, and do not affect findings or the score.</p>
+<table><tr><th>Session</th><th>Level</th><th>Score</th><th>Explanation</th></tr>
+{% for a in doc.anomalies if a.is_anomaly %}<tr><td><code>{{ a.session_id }}</code></td><td>{{ a.anomaly_level }}</td><td>{{ a.anomaly_score }}</td><td>{{ a.explanation }}</td></tr>{% else %}<tr><td colspan="4">No anomalies flagged.</td></tr>{% endfor %}
+</table>
+
+<h2>9. Method &amp; limitations</h2>
+<ul>{% for l in doc.limitations %}<li>{{ l }}</li>{% endfor %}</ul>
+<p class="meta">Generated by SecureMailScope {{ doc.tool.version }} (report format {{ doc.report_version }}). Offline document; no external resources.</p>
+</div></body></html>

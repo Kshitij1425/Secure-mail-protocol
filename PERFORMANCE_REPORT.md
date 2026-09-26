@@ -1,160 +1,52 @@
-# SecureMailScope — Performance Benchmarking Report
+# Performance Report (measured 2026-09-26)
 
-**Milestone:** M15  
-**Date:** 2026-09-16  
-**Environment:** Windows 11, Python 3.12.5, Node.js 22+  
-**Hardware:** Development workstation (specific specs recorded per test run)
+Reproduce: `cd backend && python -m tests.performance.benchmark --sizes 1000 10000 100000 1000000 --out ../PERFORMANCE_RESULTS.json`.
+Raw results: [PERFORMANCE_RESULTS.json](PERFORMANCE_RESULTS.json).
 
----
+## Environment
 
-## Methodology
+Windows 11 (10.0.26200), AMD64 Family 23 Model 24 (8 logical CPUs), 14.9 GB RAM, Python 3.12.5,
+dpkt 1.9.8, cryptography 50.0.1, scikit-learn 1.9.0, numpy 2.5.2. Single process, single thread,
+wall-clock timing (`time.perf_counter`). Other workloads on the machine were not controlled.
 
-Performance measured using real PCAP fixtures from `backend/tests/robustness/fixtures/pcaps/`.
+## Workload
 
-### Measurement Points
-1. **File upload** — Time to receive and hash file
-2. **Analysis** — M1-M11 pipeline execution (Orchestrator.analyze)
-3. **Persistence** — SQLite write operations
-4. **Total E2E** — Upload → analysis → persistence → API response
+Captures are built by replicating the repository fixtures (real OpenSSL TLS handshakes with
+certificate chains, SMTP/IMAP/POP3 STARTTLS dialogues, implicit TLS, plaintext sessions) with a
+distinct client address/port per copy: roughly 45 connections per 1,000 packets, 84% of them with
+TLS, ~200 bytes per packet on average. Real-world captures with long mail transfers have far fewer
+connections per packet and would process faster per packet.
 
-### Test Set
+## Results
 
-| Fixture | Size (bytes) | Packets | Description |
-|---|---|---|---|
-| `clean_baseline.pcap` | 419 | 3 | Minimal valid PCAP |
-| `smtp_starttls_tls13_secure.pcap` | 1,797 | 13 | Secure SMTP + TLS 1.3 |
-| `layer_b_smtp_tls13_secure.pcap` | 1,941 | ~30 | Secure SMTP, fragmented |
-| `imap_starttls_tls12.pcap` | 1,347 | ~15 | IMAP + TLS 1.2 |
+| Packets | Capture | TCP streams | Email / TLS sessions | Findings | Ingest + reassembly | Full analysis | Throughput | Persistence (SQLite) | JSON / HTML / PDF report | End-to-end | Peak RSS (analysis) | Peak RSS (incl. persistence, reports) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1,000 | 0.2 MB | 45 | 45 / 39 | 18 | 0.08 s | 0.87 s | 1,152 pkt/s | 0.06 s | 0.02 / 0.05 / 0.97 s | 2.0 s | 165 MB | 213 MB |
+| 10,000 | 2.0 MB | 452 | 452 / 383 | 211 | 0.60 s | 1.44 s | 6,943 pkt/s (1.39 MB/s) | 0.30 s | 0.14 / 0.17 / 4.0 s | 6.1 s | 220 MB | 237 MB |
+| 100,000 | 19.9 MB | 4,513 | 4,513 / 3,802 | 2,133 | 5.6 s | 12.6 s | 7,937 pkt/s (1.58 MB/s) | 2.6 s | 1.5 / 0.8 / 4.4 s | 21.9 s | 305 MB | 486 MB |
+| 1,000,000 | 198.7 MB | 45,131 | 45,131 / 38,006 | 21,375 | 58.1 s | 214.0 s | 4,674 pkt/s (0.93 MB/s) | 26.1 s | not run | 240.1 s | 1,129 MB | 1,997 MB |
 
----
+The 1K-packet row is dominated by one-time costs (first scikit-learn import, model construction).
+Largest tested capture: 1,000,000 packets / 198.7 MB. The API's default upload limit is 100 MB
+(about 500k packets of this workload).
 
-## Results (Actual Measurements)
+## Stage breakdown and optimisations made during the audit
 
-### Test 1: `clean_baseline.pcap` (419 bytes, 3 packets)
+| Change | Before | After |
+|---|---|---|
+| TCP quality recomputed (sorting every packet) on every packet | O(n^2 log n) per stream | Computed once at finalize |
+| ML scoring per session (sklearn call overhead ~33 ms each) | 91% of analysis time at 5k packets | One batched call |
+| ML rareness explanation scanned the whole baseline per flagged session | O(flagged x n) | Precomputed value frequencies |
+| PDF rendered every row of every table | 71.8 s at 100k packets | Tables capped at 400 rows (JSON/HTML keep all rows): 4.4 s |
+| Persistence built all ORM objects in one identity map | 83 s, ~2.3 GB at 1M packets | Chunked Core inserts: 26 s |
+| **1M packets end-to-end** | **398 s** | **240 s** |
 
-| Metric | Value |
-|---|---|
-| File size | 419 bytes |
-| Packet count | 3 |
-| TCP streams | 0 |
-| Email sessions | 0 |
-| TLS sessions | 0 |
-| Certificates | 0 |
-| Findings | 0 |
-| Analysis time | ~0.2s |
-| Persistence time | ~0.05s |
-| Total E2E | ~0.3s |
-| Throughput | ~15 packets/sec |
+## Limitations and interpretation
 
-**Notes:** Minimal capture. Overhead dominates.
-
----
-
-### Test 2: `smtp_starttls_tls13_secure.pcap` (1,797 bytes, 13 packets)
-
-| Metric | Value |
-|---|---|
-| File size | 1,797 bytes (~1.8 KB) |
-| Packet count | 13 |
-| TCP streams | 1 |
-| Email sessions | 1 |
-| TLS sessions | 1 |
-| Certificates | 1 |
-| Findings | 2 |
-| Analysis time | ~0.4s |
-| Persistence time | ~0.05s |
-| Total E2E | ~0.5s |
-| Throughput | ~26 packets/sec |
-
-**Notes:** Demonstrates full M1-M11 pipeline with TLS analysis.
-
----
-
-### Test 3: `layer_b_smtp_tls13_secure.pcap` (1,941 bytes, ~30 packets)
-
-| Metric | Value |
-|---|---|
-| File size | 1,941 bytes (~1.9 KB) |
-| Packet count | ~30 |
-| TCP streams | 1 |
-| Email sessions | 1 |
-| TLS sessions | 1 |
-| Certificates | 1 |
-| Findings | ~2 |
-| Analysis time | ~0.8s |
-| Persistence time | ~0.05s |
-| Total E2E | ~0.9s |
-| Throughput | ~33 packets/sec |
-
-**Notes:** Fragmented TCP reconstruction tested.
-
----
-
-## Bottleneck Analysis
-
-### Profiling (Manual Observation)
-
-1. **PCAP Ingestion (M1-M2):** ~20% of total time
-2. **TCP Reconstruction (M3):** ~30% of total time
-3. **TLS Parsing (M6):** ~15% of total time
-4. **Certificate Analysis (M7):** ~10% of total time
-5. **Security Rules (M8):** ~5% of total time
-6. **Posture Scoring (M9):** ~5% of total time
-7. **ML Anomaly Detection (M11):** ~10% of total time
-8. **SQLite Persistence:** ~5% of total time
-
-**Conclusion:** TCP reconstruction and PCAP iteration are the dominant costs for small captures. Overhead scales better with larger captures.
-
----
-
-## Scalability Characteristics
-
-### Observed Behavior
-- **Packet count:** Near-linear scaling for small-to-medium captures
-- **TCP streams:** Reconstruction cost scales with stream count, not total packet count
-- **TLS sessions:** Certificate parsing cost per session
-- **Findings:** M8 rule evaluation scales with session count
-
-### Theoretical Limits (Not Measured, Estimated)
-- **Single-file processing:** Limited by Python GIL; multi-threaded parsing not implemented
-- **SQLite writes:** Batch inserts; thousands of findings per second feasible
-- **Memory:** In-memory stream reconstruction; ~1-10 MB per 1000 streams (estimated)
-- **Large captures:** 100K+ packets would require streaming/chunked processing (not currently implemented)
-
-**Current measured throughput:** ~30 packets/sec for realistic captures with full M1-M11 processing.
-
-**Do NOT extrapolate to "billions of events/day" without distributed architecture.**
-
----
-
-## Limitations
-
-1. **Small sample size:** Only tested on fixtures < 2 KB
-2. **Overhead-dominated:** Startup costs dominate for tiny captures
-3. **Single-threaded:** No parallelism in current implementation
-4. **No large-capture testing:** Largest tested ~30 packets
-5. **Development environment:** Not production-tuned hardware
-6. **SQLite:** Not benchmarked for high-concurrency writes
-
----
-
-## Recommendations for Future Optimization
-
-1. **Batch processing:** Process multiple captures in parallel
-2. **Stream processing:** For captures >10 MB, use chunked ingestion
-3. **Cython/C extensions:** Accelerate TCP reconstruction
-4. **Database tuning:** Connection pooling, write-ahead logging
-5. **Profiling:** Use `cProfile` to identify exact bottlenecks
-
-**No optimizations made in M15 unless blocking defects discovered.**
-
----
-
-## Final Verdict
-
-SecureMailScope processes small-to-medium email captures (10-100 packets) in **< 1 second** end-to-end on development hardware. Performance is acceptable for:
-- Forensic investigation (batch upload)
-- Incident response (single-file analysis)
-- Compliance auditing (periodic assessment)
-
-**Not suitable for:** Real-time stream processing of high-throughput production email servers without architectural changes.
+* Throughput per packet falls at 1M packets (4.7k vs 7.9k pkt/s) with 45k concurrent
+  connections; memory for retained handshake bytes and per-session objects grows linearly with
+  the number of connections (about 25 KB per email session at peak during analysis).
+* Earlier documents quoted "~15-33 packets/sec" measured on 3-30 packet files; those numbers
+  measured interpreter start-up, not throughput, and are withdrawn.
+* No multi-process parallelism, no streaming persistence; analysis is synchronous in the API
+  request. No claims are made beyond the measured sizes.

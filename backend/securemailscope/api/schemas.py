@@ -1,67 +1,47 @@
 """
-Pydantic schemas for API request/response models.
-Separation between internal models and API-exposed models.
+Pydantic response models. Every endpoint's response is validated against these,
+so the documented schema and the actual payload cannot drift apart.
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
-from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
-# Enums
-class AnalysisStatus(str, Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class _ORM(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
 
-class PostureStatus(str, Enum):
-    EXCELLENT = "excellent"
-    GOOD = "good"
-    FAIR = "fair"
-    POOR = "poor"
-    CRITICAL = "critical"
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    database_connected: bool
 
 
-class SeverityLevel(str, Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
 
 
-class AnomalyLevel(str, Enum):
-    NORMAL = "normal"
-    MILD = "mild"
-    MODERATE = "moderate"
-    SEVERE = "severe"
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+    detail: Optional[str] = None
 
 
-# Request Models
-class AnalyzeUploadRequest(BaseModel):
-    """Request model for PCAP upload."""
-    pass  # File upload handled separately
+class AnalysisResponse(BaseModel):
+    capture_id: str
+    status: str
+    message: str
 
 
-# Response Models - Base
-class TimestampMixin(BaseModel):
-    """Mixin for timestamp fields."""
-    created_at: Optional[datetime] = None
-    upload_timestamp: Optional[datetime] = None
-    analysis_timestamp: Optional[datetime] = None
-    timestamp: Optional[datetime] = None
-
-
-# Response Models - Capture
-class CaptureSummary(BaseModel):
-    """Summary of a capture for listing."""
+# ------------------------------------------------------------------ captures
+class CaptureSummary(_ORM):
     capture_id: str
     filename: str
     file_hash: str
-    upload_timestamp: datetime
+    upload_timestamp: Optional[datetime]
     analysis_status: str
+    analysis_error: Optional[str] = None
     packet_count: int
     stream_count: int
     email_session_count: int
@@ -72,33 +52,31 @@ class CaptureSummary(BaseModel):
     anomalies_count: int = 0
 
 
-class CaptureDetail(BaseModel):
-    """Detailed capture information."""
-    capture_id: str
-    filename: str
-    file_hash: str
+class CaptureDetail(CaptureSummary):
     file_size: int
-    upload_timestamp: datetime
-    analysis_status: str
+    file_format: Optional[str]
     analysis_timestamp: Optional[datetime]
-    packet_count: int
-    stream_count: int
-    email_session_count: int
-    tls_session_count: int
-    posture_score: Optional[float]
-    posture_status: Optional[str]
+    analysis_duration_seconds: Optional[float]
+    capture_start: Optional[datetime]
+    capture_end: Optional[datetime]
     scoring_policy_version: Optional[str]
+    rule_policy_version: Optional[str]
     ml_engine_version: Optional[str]
+    ml_status: Optional[str]
     ml_anomalies_detected: int
-    findings_count: int = 0
     sessions_count: int = 0
     certificates_count: int = 0
+    reports_count: int = 0
+    severity_counts: Dict[str, int] = {}
+    coverage: Dict[str, Any] = {}
+    ingestion: Dict[str, Any] = {}
 
 
-# Response Models - Session
-class SessionSummary(BaseModel):
-    """Summary of a TLS session."""
+# ------------------------------------------------------------------ sessions
+class SessionSummary(_ORM):
     session_id: str
+    capture_id: str
+    stream_id: str
     protocol: str
     source_ip: Optional[str]
     source_port: Optional[int]
@@ -108,182 +86,175 @@ class SessionSummary(BaseModel):
     end_timestamp: Optional[datetime]
     packet_count: int
     byte_count: int
+    detection_method: Optional[str]
+    implicit_tls: bool
     starttls_state: Optional[str]
     tls_version: Optional[str]
     cipher_suite: Optional[str]
-    has_forward_secrecy: bool
+    has_forward_secrecy: Optional[bool]
+    handshake_status: Optional[str]
+    certificate_visibility: Optional[str]
+    reconstruction_quality: Optional[str]
     has_findings: bool
     has_anomaly: bool
     anomaly_level: Optional[str]
 
 
 class SessionDetail(SessionSummary):
-    """Detailed session information."""
     key_exchange: Optional[str]
+    key_exchange_group: Optional[str]
+    sni: Optional[str]
+    client_hello_version: Optional[str]
+    starttls_advertised: Optional[bool]
     handshake_complete: bool
     anomaly_score: Optional[float]
-    findings: List[str] = []  # Finding IDs
-    certificates: List[str] = []  # Certificate fingerprints
+    first_frame: Optional[int]
+    last_frame: Optional[int]
+    findings: List[str] = []
+    certificates: List[str] = []
+    anomaly_id: Optional[int] = None
+    detail: Dict[str, Any] = {}
 
 
-# Response Models - Finding
-class FindingSummary(BaseModel):
-    """Summary of a security finding."""
+# ------------------------------------------------------------------ findings
+class FindingSummary(_ORM):
     finding_id: str
+    capture_id: str
     rule_id: str
     title: str
     severity: str
     category: str
+    dimension: Optional[str]
+    evidence_type: Optional[str]
     session_id: Optional[str]
     confidence: float
+    risk_contribution: float
+    priority: Optional[int]
+    status: str
 
 
 class FindingDetail(FindingSummary):
-    """Detailed finding information."""
-    risk_contribution: float
     explanation: Optional[str]
     recommendation: Optional[str]
-    evidence: Optional[str]
-    timestamp: datetime
+    references: Optional[str]
+    evidence: Dict[str, Any] = {}
+    evidence_frames: List[int] = []
+    timestamp: Optional[datetime]
     affected_sessions: List[str] = []
 
 
-# Response Models - Certificate
-class CertificateSummary(BaseModel):
-    """Summary of a certificate."""
+class FindingStatusUpdate(BaseModel):
+    status: str
+
+
+# -------------------------------------------------------------- certificates
+class CertificateSummary(_ORM):
+    certificate_id: str
+    capture_id: str
+    session_id: str
+    chain_position: int
     fingerprint_sha256: str
-    subject: str
-    issuer: str
+    subject: Optional[str]
+    issuer: Optional[str]
+    common_name: Optional[str]
+    not_after: Optional[datetime]
     is_expired: bool
+    is_not_yet_valid: bool
     is_self_signed: bool
-    public_key_algorithm: str
+    public_key_algorithm: Optional[str]
     public_key_size_bits: Optional[int]
+    trust_status: str
 
 
 class CertificateDetail(CertificateSummary):
-    """Detailed certificate information."""
     serial_number: Optional[str]
     not_before: Optional[datetime]
-    not_after: Optional[datetime]
+    validity_reference: Optional[str]
+    is_ca: Optional[bool]
     signature_algorithm: Optional[str]
     san_list: List[str] = []
     weak_key: bool
     weak_signature: bool
-    session_id: Optional[str]
+    issued_by_next: Optional[str]
+    seen_in_sessions: List[str] = []
 
 
-# Response Models - Anomaly
-class AnomalySummary(BaseModel):
-    """Summary of an anomaly."""
+# ----------------------------------------------------------------- anomalies
+class AnomalySummary(_ORM):
     id: int
+    capture_id: str
     session_id: str
     is_anomaly: bool
     anomaly_score: Optional[float]
-    anomaly_level: str
+    anomaly_level: Optional[str]
     model_version: Optional[str]
 
 
 class AnomalyDetail(AnomalySummary):
-    """Detailed anomaly information."""
-    capture_id: str
     explanation: Optional[str]
-    features: Dict[str, float] = {}
-    timestamp: datetime
+    features: Dict[str, Any] = {}
+    timestamp: Optional[datetime]
+    classification: str = "ML_ANOMALY (statistical outlier; not a confirmed vulnerability)"
 
 
-# Response Models - Posture
-class DimensionScore(BaseModel):
-    """Score for a single dimension."""
+# ------------------------------------------------------------------- posture
+class ContributorModel(BaseModel):
+    root_issue: str
+    severity: str
+    affected_sessions: int
+    total_sessions: Optional[int] = None
+    prevalence: float
+    impact_points: float
+    explanation: str
+    finding_ids: List[str] = []
+
+
+class DimensionScoreModel(BaseModel):
     dimension: str
-    score: float
-    status: str
+    name: str
+    score: Optional[float]
+    weight: float
+    affected_sessions: int
+    assessable_sessions: int
+    findings_count: int
     coverage_percent: float
     evidence_quality: str
-    sessions_affected: int
-    findings_count: int
+    top_contributors: List[ContributorModel] = []
 
 
-class TopContributor(BaseModel):
-    """Top contributing finding."""
-    rule_id: str
-    title: str
+class RootCauseGroupModel(BaseModel):
+    root_issue: str
     severity: str
-    sessions_affected: int
-    impact: float
-
-
-class RootCauseGroup(BaseModel):
-    """Root cause grouping of findings."""
-    root_cause: str
-    severity: str
-    sessions_affected: int
-    findings_count: int
-    rule_ids: List[str]
+    affected_sessions: int
+    total_sessions: int
+    prevalence_percent: float
+    finding_count: int
 
 
 class PostureResponse(BaseModel):
-    """Posture score response."""
-    overall_score: float
+    capture_id: str
+    overall_score: Optional[float]
     status: str
-    dimension_scores: List[DimensionScore]
-    top_contributors: List[TopContributor]
-    root_cause_groups: List[RootCauseGroup]
     scoring_policy_version: str
-    analysis_timestamp: datetime
+    analysis_timestamp: Optional[datetime]
     total_sessions: int
+    tls_sessions: int
     sessions_with_findings: int
     findings_count: int
+    tls_coverage_percent: float
+    certificate_coverage_percent: float
     coverage_percent: float
+    dimension_scores: List[DimensionScoreModel]
+    top_contributors: List[ContributorModel]
+    root_cause_groups: List[RootCauseGroupModel]
+    remediation_plan: List[Dict[str, Any]] = []
 
 
-# Response Models - Report
-class ReportSummary(BaseModel):
-    """Summary of a generated report."""
+# ------------------------------------------------------------------- reports
+class ReportSummary(_ORM):
     report_id: str
     capture_id: str
     report_type: str
     file_size: int
-    created_at: datetime
-
-
-class ReportDetail(ReportSummary):
-    """Detailed report information."""
-    download_url: str
-
-
-# Response Models - Analysis
-class AnalysisResponse(BaseModel):
-    """Response for analysis submission."""
-    capture_id: str
-    status: str
-    message: str
-
-
-class AnalysisJobStatus(BaseModel):
-    """Status of an analysis job."""
-    capture_id: str
-    status: str
-    posture_score: Optional[float]
-    posture_status: Optional[str]
-    progress_percent: int = 0
-
-
-# Response Models - Health
-class HealthResponse(BaseModel):
-    """Health check response."""
-    status: str
-    version: str
-    database_connected: bool
-
-
-# Error Response
-class ErrorDetail(BaseModel):
-    """Detailed error information."""
-    code: str
-    message: str
-    details: Optional[Dict[str, Any]] = None
-
-
-class ErrorResponse(BaseModel):
-    """Standard error response."""
-    error: ErrorDetail
+    sha256: Optional[str]
+    created_at: Optional[datetime]

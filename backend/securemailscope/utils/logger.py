@@ -1,32 +1,46 @@
+"""
+Logging for SecureMailScope.
+
+A single handler is attached to the ``securemailscope`` package logger and
+writes to stderr (never stdout, which the CLI uses for results). Module loggers
+propagate to it, so one ``setLevel`` call controls the whole package.
+
+A file log is written only when ``SMS_LOG_FILE`` is set. Nothing is created on
+import. Log messages never contain payload bytes or credentials: modules log
+counts, hashes, and identifiers only.
+"""
 import logging
 import os
 import sys
-from pathlib import Path
 
-# Create logs directory if it doesn't exist
-log_dir = Path(os.getcwd()) / "logs"
-log_dir.mkdir(exist_ok=True)
-
-# Format for evidence/forensic logging (timestamp, level, module, message)
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s"
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-32s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_ROOT = "securemailscope"
+_configured = False
+
+
+def _configure() -> None:
+    global _configured
+    if _configured:
+        return
+    root = logging.getLogger(_ROOT)
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+        root.addHandler(handler)
+        log_file = os.environ.get("SMS_LOG_FILE")
+        if log_file:
+            fh = logging.FileHandler(log_file, encoding="utf-8")
+            fh.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+            root.addHandler(fh)
+        root.setLevel(os.environ.get("SMS_LOG_LEVEL", "INFO").upper())
+        root.propagate = False
+    _configured = True
+
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a configured logger for the application."""
-    logger = logging.getLogger(name)
-
-    # Only configure if not already configured
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-
-        # Console handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
-        logger.addHandler(console_handler)
-
-        # File handler
-        file_handler = logging.FileHandler(log_dir / "securemailscope.log")
-        file_handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
-        logger.addHandler(file_handler)
-
-    return logger
+    """Return a module logger that propagates to the package handler."""
+    _configure()
+    if not name.startswith(_ROOT):
+        name = f"{_ROOT}.{name}"
+    return logging.getLogger(name)

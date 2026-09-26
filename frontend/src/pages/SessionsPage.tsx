@@ -1,161 +1,131 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Search } from 'lucide-react';
 import { useCapture } from '../context/CaptureContext';
 import { getCaptureSessions, getSession } from '../lib/api';
-import type { SessionSummary, SessionDetail as SessionDetailType } from '../types/api';
-import { ArrowRight, X } from 'lucide-react';
+import { useAsync } from '../hooks/useAsync';
+import { useDetailPanel } from '../hooks/useDetailPanel';
+import { DetailPanel, Field, StateBlock } from '../components/StateBlock';
+
+const yesNo = (v: boolean | null | undefined) => (v === null || v === undefined ? 'unknown' : v ? 'yes' : 'no');
+const short = (id: string) => id.split('~').pop() ?? id;
 
 export const SessionsPage = () => {
   const { activeCaptureId } = useCapture();
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSession, setSelectedSession] = useState<SessionDetailType | null>(null);
+  const { selectedId, open, close } = useDetailPanel();
+  const [protocol, setProtocol] = useState('all');
+  const [search, setSearch] = useState('');
+  const list = useAsync(() => getCaptureSessions(activeCaptureId!), activeCaptureId);
+  const detail = useAsync(() => getSession(selectedId!), selectedId);
 
-  useEffect(() => {
-    let ignore = false;
-    if (!activeCaptureId) {
-      return;
-    }
+  const rows = useMemo(() => (list.data ?? []).filter((s) =>
+    (protocol === 'all' || s.protocol === protocol) &&
+    (!search || `${s.source_ip}:${s.source_port} ${s.dest_ip}:${s.dest_port} ${s.cipher_suite ?? ''} ${s.tls_version ?? ''}`
+      .toLowerCase().includes(search.toLowerCase()))), [list.data, protocol, search]);
 
-    const loadSessions = async () => {
-      try {
-        const data = await getCaptureSessions(activeCaptureId);
-        if (!ignore) {
-          setSessions(data);
-          setSelectedSession(null);
-        }
-      } catch (err) {
-        if (!ignore) {
-          console.error('Failed to load sessions', err);
-        }
-      }
-    };
-
-    loadSessions();
-
-    return () => {
-      ignore = true;
-    };
-  }, [activeCaptureId]);
-
-  const handleSelectSession = async (id: string) => {
-    try {
-      const detail = await getSession(id);
-      setSelectedSession(detail);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Derive empty-state values during render instead of setting state in effect.
-  const currentSessions = activeCaptureId ? sessions : [];
-  const currentSelectedSession = activeCaptureId ? selectedSession : null;
+  if (!activeCaptureId) return <StateBlock empty emptyText="Select a capture to view sessions." />;
+  const d = detail.data;
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Session Explorer</h2>
-        <p className="text-sm text-slate-400 mt-1">Reconstructed email TCP streams and negotiated TLS security properties.</p>
+        <p className="text-sm text-slate-400 mt-1">Reassembled SMTP / IMAP / POP3 connections and what was observable of their TLS negotiation.</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4 bg-slate-900/40 p-4 rounded-lg border border-slate-800">
+        <label className="flex items-center gap-3 flex-1 min-w-[240px]">
+          <Search size={16} className="text-slate-500" />
+          <input type="search" aria-label="Search sessions" placeholder="Search IP, port, cipher, version..." value={search}
+            onChange={(e) => setSearch(e.target.value)} className="bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none w-full" />
+        </label>
+        <select aria-label="Filter by protocol" value={protocol} onChange={(e) => setProtocol(e.target.value)}
+          className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded px-3 py-1.5">
+          <option value="all">All protocols</option><option value="SMTP">SMTP</option><option value="IMAP">IMAP</option><option value="POP3">POP3</option>
+        </select>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Sessions Table */}
-        <div className={`space-y-3 ${currentSelectedSession ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
-          {currentSessions.length === 0 ? (
-            <div className="text-center py-12 bg-slate-900/20 border border-slate-800 rounded-lg text-slate-500">
-              No sessions detected in capture.
-            </div>
-          ) : (
-            currentSessions.map((s) => (
-              <div
-                key={s.session_id}
-                onClick={() => handleSelectSession(s.session_id)}
-                className={`p-4 rounded-lg border transition-all cursor-pointer flex items-center justify-between ${
-                  currentSelectedSession?.session_id === s.session_id
-                    ? 'bg-slate-800/80 border-amber-500/50'
-                    : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'
-                }`}
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="bg-slate-800 px-2 py-0.5 rounded text-[11px] font-mono font-bold text-amber-400 uppercase">
-                      {s.protocol}
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">
-                      {s.source_ip || '127.0.0.1'}:{s.source_port || 0} → {s.dest_ip || '127.0.0.1'}:{s.dest_port || 25}
-                    </span>
+        <div className={`space-y-3 ${selectedId ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+          <StateBlock loading={list.loading} error={list.error} onRetry={list.reload} empty={!list.loading && rows.length === 0}
+            emptyText={list.data?.length ? 'No sessions match the filters.' : 'No email sessions detected in this capture.'}>
+            {rows.map((s) => (
+              <button key={s.session_id} type="button" onClick={() => open(s.session_id)} aria-pressed={selectedId === s.session_id}
+                aria-label={`Open details for session ${s.source_ip}:${s.source_port} to ${s.dest_ip}:${s.dest_port}`}
+                className={`w-full text-left p-4 rounded-lg border transition-all flex items-center justify-between gap-4 ${selectedId === s.session_id
+                  ? 'bg-slate-800/80 border-amber-500/50' : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'}`}>
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="bg-slate-800 px-2 py-0.5 rounded text-[11px] font-mono font-bold text-amber-400">{s.protocol}</span>
+                    {s.implicit_tls && <span className="text-[10px] text-sky-300 border border-sky-800 rounded px-1">implicit TLS</span>}
+                    <span className="text-xs text-slate-400 font-mono break-all">{s.source_ip}:{s.source_port} → {s.dest_ip}:{s.dest_port}</span>
                   </div>
-                  <div className="text-xs text-slate-300 font-mono">
-                    TLS: {s.tls_version || 'Plaintext / Unencrypted'} · {s.cipher_suite || 'None'}
+                  <div className="text-xs text-slate-300 font-mono break-all">
+                    {s.tls_version ? `${s.tls_version} · ${s.cipher_suite ?? 'cipher not observed'}` : s.starttls_state === 'PLAINTEXT' ? 'Plaintext (no TLS observed)' : `${s.starttls_state} · TLS version not observed`}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-4">
-                  {s.has_anomaly && (
-                    <span className="bg-red-950 text-red-400 border border-red-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
-                      ML Anomaly
-                    </span>
-                  )}
-                  {s.has_forward_secrecy ? (
-                    <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
-                      PFS
-                    </span>
-                  ) : (
-                    <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
-                      No PFS
-                    </span>
-                  )}
-                  <ArrowRight size={16} className="text-slate-600" />
+                <div className="flex items-center gap-2 shrink-0">
+                  {s.has_findings && <span className="bg-amber-950 text-amber-300 border border-amber-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">Findings</span>}
+                  {s.has_anomaly && <span className="bg-fuchsia-950 text-fuchsia-300 border border-fuchsia-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">ML outlier</span>}
+                  {s.has_forward_secrecy === true && <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">PFS</span>}
+                  {s.has_forward_secrecy === false && <span className="bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase">No PFS</span>}
+                  <ArrowRight size={16} className="text-slate-500" aria-hidden="true" />
                 </div>
-              </div>
-            ))
-          )}
+              </button>
+            ))}
+          </StateBlock>
         </div>
 
-        {/* Forensic Timeline & Session Details */}
-        {currentSelectedSession && (
-          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6 h-fit sticky top-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <span className="text-xs font-mono text-slate-500 uppercase">Session ID: {currentSelectedSession.session_id}</span>
-                <h3 className="text-lg font-bold text-slate-100 mt-1">Stream Forensic Details</h3>
-              </div>
-              <button
-                onClick={() => setSelectedSession(null)}
-                className="text-slate-500 hover:text-slate-300 p-1"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Forensic Attribute List */}
-            <div className="space-y-3 font-mono text-xs divide-y divide-slate-800/60">
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Protocol:</span>
-                <span className="text-amber-400 font-bold">{currentSelectedSession.protocol}</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">STARTTLS Status:</span>
-                <span className="text-slate-200">{currentSelectedSession.starttls_state || 'NOT OBSERVED'}</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">TLS Version:</span>
-                <span className="text-slate-200">{currentSelectedSession.tls_version || 'NONE'}</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Cipher Suite:</span>
-                <span className="text-slate-200 text-right max-w-[200px] truncate">{currentSelectedSession.cipher_suite || 'NONE'}</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Forward Secrecy:</span>
-                <span className={currentSelectedSession.has_forward_secrecy ? 'text-emerald-400' : 'text-red-400'}>
-                  {currentSelectedSession.has_forward_secrecy ? 'YES' : 'NO'}
-                </span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Handshake Complete:</span>
-                <span className="text-slate-200">{currentSelectedSession.handshake_complete ? 'YES' : 'NO'}</span>
-              </div>
-            </div>
-          </div>
+        {selectedId && (
+          <DetailPanel title="Session details" subtitle={short(selectedId)} onClose={close}>
+            <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload}>
+              {d && (
+                <div className="space-y-4">
+                  <div>
+                    <Field label="Protocol">{d.protocol}{d.implicit_tls ? ' (implicit TLS)' : ''} · {d.detection_method}</Field>
+                    <Field label="Client">{d.source_ip}:{d.source_port}</Field>
+                    <Field label="Server">{d.dest_ip}:{d.dest_port}</Field>
+                    <Field label="Frames">{d.first_frame} – {d.last_frame} ({d.packet_count} packets, {d.byte_count} B payload)</Field>
+                    <Field label="TCP reassembly">{d.reconstruction_quality}</Field>
+                    <Field label="STARTTLS">{d.implicit_tls ? 'n/a (implicit TLS)' : d.starttls_state}</Field>
+                    <Field label="STARTTLS advertised">{yesNo(d.starttls_advertised)}</Field>
+                    <Field label="Negotiated TLS">{d.tls_version ?? 'not observed'}</Field>
+                    <Field label="Client offered">{d.detail.tls?.client_max_version ?? 'not observed'}</Field>
+                    <Field label="Cipher suite">{d.cipher_suite ?? 'not observed'}</Field>
+                    <Field label="Key exchange">{d.key_exchange ?? 'not observed'}{d.key_exchange_group ? ` (${d.key_exchange_group})` : ''}</Field>
+                    <Field label="Forward secrecy">{yesNo(d.has_forward_secrecy)}</Field>
+                    <Field label="SNI">{d.sni ?? 'not sent'}</Field>
+                    <Field label="Handshake">{d.handshake_status ?? 'not observed'}</Field>
+                    <Field label="Certificates">{d.certificate_visibility === 'encrypted_tls13' ? 'encrypted (TLS 1.3) — not observable' : `${d.certificates.length} observed`}</Field>
+                    {!!d.detail.starttls?.plaintext_auth_mechanisms?.length && (
+                      <Field label="Plaintext auth">{d.detail.starttls.plaintext_auth_mechanisms.join(', ')} (values not stored)</Field>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-xs uppercase font-bold text-slate-400 block mb-1">Findings ({d.findings.length})</span>
+                    {d.findings.length ? (
+                      <ul className="space-y-1">{d.findings.map((f) => (
+                        <li key={f}><Link className="text-xs font-mono text-amber-300 hover:underline break-all" to={`/findings?id=${encodeURIComponent(f)}`}>{f.startsWith(`${d.session_id}:`) ? f.slice(d.session_id.length + 1) : f}</Link></li>
+                      ))}</ul>
+                    ) : <p className="text-xs text-slate-500">None.</p>}
+                  </div>
+                  {d.certificates.length > 0 && (
+                    <div>
+                      <span className="text-xs uppercase font-bold text-slate-400 block mb-1">Certificate chain</span>
+                      <ul className="space-y-1">{d.certificates.map((c) => (
+                        <li key={c}><Link className="text-xs font-mono text-amber-300 hover:underline" to={`/certificates?id=${encodeURIComponent(c)}`}>position {c.split('~c').pop()}</Link></li>
+                      ))}</ul>
+                    </div>
+                  )}
+                  {d.anomaly_id !== null && (
+                    <Link to={`/anomalies?id=${d.anomaly_id}`} className="text-xs text-fuchsia-300 hover:underline">
+                      ML assessment: {d.has_anomaly ? `outlier (${d.anomaly_level})` : 'normal'} →
+                    </Link>
+                  )}
+                </div>
+              )}
+            </StateBlock>
+          </DetailPanel>
         )}
       </div>
     </div>

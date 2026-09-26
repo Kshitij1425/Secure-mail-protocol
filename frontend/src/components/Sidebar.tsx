@@ -35,8 +35,7 @@ export const Sidebar = () => {
           </Link>
         ))}
       </nav>
-      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600">
-        M13 · React Security Dashboard
+      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600">        SecureMailScope Security Dashboard
       </div>
     </aside>
   );

@@ -1,8 +1,25 @@
 {
   "name": "smtp_starttls_truncated",
   "expected_protocol": "SMTP",
-  "expected_tls": true,
+  "expected_tls": false,
   "expected_reconstruction_quality": "complete",
   "expected_findings": [],
-  "expected_anomalies": []
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "SMTP",
+      "starttls_state": "TLS_HANDSHAKE_STARTED",
+      "tls_version": null,
+      "findings": [],
+      "certificates": 0,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": "incomplete"
+    }
+  ],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "ClientHello observed, ServerHello incomplete: version, cipher and certificates are UNKNOWN, not insecure."
 }

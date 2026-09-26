@@ -1,23 +1,41 @@
 [project]
 name = "securemailscope"
-version = "0.1.0"
-description = "AI-assisted passive network forensic framework for email cryptographic posture"
+dynamic = ["version", "description"]
 requires-python = ">=3.12"
+license = { text = "MIT" }
+# Runtime dependencies actually imported by the package.
 dependencies = [
-    "dpkt",
-    "scapy",
-    "cryptography",
-    "fastapi",
-    "uvicorn",
-    "sqlalchemy",
-    "pydantic",
-    "pydantic-settings",
-    "pandas",
-    "numpy",
-    "scikit-learn",
-    "jinja2"
+    "dpkt>=1.9.8,<2",
+    "cryptography>=42",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.18",
+    "sqlalchemy>=2.0,<3",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "jinja2>=3.1.4",
+    "reportlab>=4.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6.100",
+    "httpx>=0.27",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+]
+# Only needed to regenerate test fixtures (tests/robustness/fixture_factory.py uses the
+# stdlib ssl module + cryptography; no extra packages are required today).
+
+[project.scripts]
+securemailscope = "securemailscope.cli:main"
 
 [build-system]
 requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

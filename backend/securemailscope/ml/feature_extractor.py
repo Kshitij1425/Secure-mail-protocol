@@ -140,13 +140,13 @@ class FeatureExtractor:
         return float(cert.public_key_size_bits) if cert.public_key_size_bits else 0.0
 
     @staticmethod
-    def extract_certificate_age(cert: Optional[CertificateDetails]) -> float:
-        """Days since certificate issuance (from not_before)."""
+    def extract_certificate_age(cert: Optional[CertificateDetails], reference_time=None) -> float:
+        """Days since certificate issuance (from not_before) at ``reference_time`` (default: now)."""
         if not cert or not hasattr(cert, 'not_before') or not cert.not_before:
             return 0.0
         from datetime import datetime, timezone
         try:
-            now = datetime.now(timezone.utc)
+            now = reference_time or datetime.now(timezone.utc)
             issued = cert.not_before
             if isinstance(issued, datetime):
                 delta = now - issued
@@ -157,13 +157,13 @@ class FeatureExtractor:
             return 0.0
 
     @staticmethod
-    def extract_certificate_validity(cert: Optional[CertificateDetails]) -> float:
-        """Days until certificate expiration (from not_after). Negative if expired."""
+    def extract_certificate_validity(cert: Optional[CertificateDetails], reference_time=None) -> float:
+        """Days until expiration (from not_after) at ``reference_time`` (default: now). Negative if expired."""
         if not cert or not hasattr(cert, 'not_after') or not cert.not_after:
             return 0.0
         from datetime import datetime, timezone
         try:
-            now = datetime.now(timezone.utc)
+            now = reference_time or datetime.now(timezone.utc)
             expires = cert.not_after
             if isinstance(expires, datetime):
                 delta = expires - now
@@ -212,11 +212,15 @@ class FeatureExtractor:
         tls_data: Optional[TLSSessionData],
         certs: List[CertificateDetails],
         packet_count: int = 0,
-        session_duration_seconds: float = 0.0
+        session_duration_seconds: float = 0.0,
+        reference_time=None,
     ) -> Optional[SessionFeatures]:
         """
         Extract features from a complete TLS session.
         Returns None if insufficient data.
+
+        ``reference_time`` anchors certificate age/validity (the capture time in the
+        pipeline) so identical captures always yield identical features.
         """
         if not tls_data:
             return None
@@ -224,9 +228,11 @@ class FeatureExtractor:
         tls_version_ord = cls.extract_tls_version_ordinal(tls_data.server_version)
         cipher_strength = cls.extract_cipher_strength(tls_data.cipher_suite_name)
         key_size = cls.extract_key_size(certs[0]) if certs else 0.0
-        cert_age = cls.extract_certificate_age(certs[0]) if certs else 0.0
-        cert_validity = cls.extract_certificate_validity(certs[0]) if certs else 0.0
+        cert_age = cls.extract_certificate_age(certs[0], reference_time) if certs else 0.0
+        cert_validity = cls.extract_certificate_validity(certs[0], reference_time) if certs else 0.0
         has_pfs = cls.extract_forward_secrecy(tls_data.cipher_suite_name)
+        if tls_data.server_version == "TLSv1.3":
+            has_pfs = 1.0
         sig_strength = cls.extract_signature_strength(certs[0]) if certs else 50.0
         chain_depth = cls.extract_certificate_chain_depth(certs)
 

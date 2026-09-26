@@ -1,12 +1,32 @@
-# SecureMailScope
+# Python
 .venv/
-node_modules/
 __pycache__/
 *.pyc
 .pytest_cache/
+.hypothesis/
+*.egg-info/
+
+# Runtime data (never commit captures, databases, logs or generated reports)
 *.db
-.DS_Store
-uploads/
-dist/
+*.db-journal
+*.db.*.bak
+# Anchored: an unanchored "reports/" would also ignore the source package securemailscope/reports/
+/uploads/
+/backend/uploads/
+/backend/reports/
+/reports/
+/backend/logs/
+/logs/
+*.log
+.env
+.env.*
+
+# Node / frontend
+node_modules/
 frontend/node_modules/
+dist/
 frontend/dist/
+
+# Tooling
+.playwright-mcp/
+.DS_Store

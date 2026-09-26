@@ -3,8 +3,23 @@
   "expected_protocol": "IMAP",
   "expected_tls": true,
   "expected_reconstruction_quality": "complete",
-  "expected_findings": [
-    "CERT-005"
+  "expected_findings": [],
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "IMAP",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.2",
+      "findings": [],
+      "certificates": 2,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": "complete"
+    }
   ],
-  "expected_anomalies": []
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "Every TLS record spans many 90-byte TCP segments."
 }

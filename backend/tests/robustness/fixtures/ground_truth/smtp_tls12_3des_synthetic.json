@@ -1,0 +1,35 @@
+{
+  "name": "smtp_tls12_3des_synthetic",
+  "expected_protocol": "SMTP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "CERT-005",
+    "TLS-003",
+    "TLS-004",
+    "TLS-006"
+  ],
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "SMTP",
+      "starttls_state": "TLS_HANDSHAKE_STARTED",
+      "tls_version": "TLSv1.2",
+      "findings": [
+        "CERT-005",
+        "TLS-003",
+        "TLS-004",
+        "TLS-006"
+      ],
+      "certificates": 1,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": "incomplete"
+    }
+  ],
+  "tls_source": "hand-built (synthetic)",
+  "certificate_validity_reference": "capture_time",
+  "notes": "Hand-built hellos: server selects TLS_RSA_WITH_3DES_EDE_CBC_SHA; client also offers RC4."
+}

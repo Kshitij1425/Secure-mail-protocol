@@ -27,7 +27,11 @@ def test_tcp_stream_syn_ack():
     assert stream.packets_analyzed == 2
 
 def test_tcp_stream_rst():
-    """Test that RST packets mark a stream as malformed."""
+    """RST is a normal (abortive) close: it is recorded, not treated as corruption.
+
+    The previous assertion ("malformed") was incorrect; a SYN followed by RST is an
+    incomplete connection attempt with no payload.
+    """
     recon = TCPReconstructor()
 
     tcp_syn = dpkt.tcp.TCP(sport=12345, dport=25, seq=100, flags=dpkt.tcp.TH_SYN)
@@ -43,7 +47,9 @@ def test_tcp_stream_rst():
 
     streams = recon.get_streams()
     assert len(streams) == 1
-    assert streams[0].reconstruction_quality == "malformed"
+    assert streams[0].rst_seen is True
+    assert streams[0].reconstruction_quality == "incomplete"
+    assert streams[0].src_port == 12345 and streams[0].dst_port == 25  # client/server from SYN
 
 def test_tcp_stream_payload():
     """Test that payload data is captured in the stream."""

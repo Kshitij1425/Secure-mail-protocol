@@ -25,7 +25,7 @@ from securemailscope.scoring.models import (
     EvidenceQuality,
     ScoreStatus
 )
-from securemailscope.rules.engine import FindingResult, Severity
+from securemailscope.rules.engine import FindingResult, Severity, RULE_CATALOGUE
 
 
 @dataclass
@@ -49,8 +49,7 @@ class SecurityPostureScorer:
     Scoring formula:
       overall_score = max(0, 100 - sum(per_root_cause_impacts))
       where per_root_cause_impact = min(severity_impact * prevalence_multiplier, 40)
-      prevalence_multiplier = 1.0 + (affected_sessions / total_sessions) / threshold_high
-        capped at prevalence_max_multiplier (1.5)
+      prevalence_multiplier = 1.0 + (max_multiplier - 1.0) * min(1, prevalence / threshold_high)
     """
 
     def __init__(self, policy=None):
@@ -61,12 +60,14 @@ class SecurityPostureScorer:
         """Simple logging helper."""
         if self.logger:
             self.logger.info(msg)
-        print(f"[Scoring] {msg}")
+
+    SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
 
     def calculate_posture(self, findings: List[FindingResult],
                          tls_session_count: int,
                          protocol_session_count: int,
-                         securemailscope_version: str) -> PostureScore:
+                         securemailscope_version: str,
+                         coverage: Optional[Dict[str, int]] = None) -> PostureScore:
         """
         Calculate security posture from M8 findings.
 
@@ -79,8 +80,22 @@ class SecurityPostureScorer:
         Returns:
             Complete posture score with dimension breakdown
         """
+        # Without explicit coverage, fall back to the session counts we were given.
+        self._coverage = coverage or {"email_sessions": protocol_session_count,
+                                      "tls_observed": tls_session_count}
+        if protocol_session_count <= 0:
+            # Nothing was assessable: this is "unknown", not "excellent".
+            return self._create_unknown_posture(securemailscope_version, len(findings))
+
+        all_findings = findings
+        # Findings that only record missing evidence are reported but not scored:
+        # unknown is not automatically insecure.
+        findings = [f for f in findings if getattr(f, "evidence_type", "OBSERVED") != "INSUFFICIENT_EVIDENCE"]
         if not findings:
-            return self._create_empty_posture(protocol_session_count, securemailscope_version)
+            posture = self._create_empty_posture(protocol_session_count, securemailscope_version)
+            posture.tls_sessions = tls_session_count
+            posture.findings_count = len(all_findings)
+            return posture
 
         # Group findings by root cause
         root_cause_groups = self._group_by_root_cause(findings, protocol_session_count)
@@ -92,7 +107,8 @@ class SecurityPostureScorer:
 
         # Calculate overall score: 100 minus sum of all root-cause impacts
         total_impact = sum(self._calculate_root_cause_impact(g) for g in root_cause_groups.values())
-        overall_score = max(0.0, 100.0 - total_impact)
+        # Rounded once, here, so every layer (DB, API, reports, UI) carries the same value.
+        overall_score = round(max(0.0, 100.0 - total_impact), 2)
 
         # Calculate coverage metrics
         coverage_metrics = self._calculate_coverage_metrics(
@@ -116,11 +132,30 @@ class SecurityPostureScorer:
             dimension_scores=dimension_scores,
             top_contributors=top_contributors,
             securemailscope_version=securemailscope_version,
-            findings_count=len(findings),
+            findings_count=len(all_findings),
             root_cause_groups=self._format_root_cause_groups(root_cause_groups)
         )
 
         return posture
+
+    def _create_unknown_posture(self, securemailscope_version: str, findings_count: int = 0) -> PostureScore:
+        """Posture for a capture with no assessable email sessions."""
+        dimension_scores = [
+            DimensionScore(dimension=dim_name, name=cfg.name, score=None, weight=cfg.weight,
+                           affected_sessions=0, assessable_sessions=0, findings_count=0,
+                           coverage_percent=0.0, evidence_quality=EvidenceQuality.INSUFFICIENT,
+                           top_contributors=[])
+            for dim_name, cfg in self.policy.dimensions.items()
+        ]
+        return PostureScore(
+            overall_score=None, status=ScoreStatus.UNKNOWN,
+            scoring_policy_version=self.policy.version, analyzed_at=datetime.now(timezone.utc),
+            total_sessions=0, tls_sessions=0, sessions_with_findings=0,
+            tls_coverage_percent=0.0, certificate_coverage_percent=0.0,
+            dimension_scores=dimension_scores, top_contributors=[],
+            securemailscope_version=securemailscope_version, findings_count=findings_count,
+            root_cause_groups={},
+        )
 
     def _create_empty_posture(self, total_sessions: int,
                              securemailscope_version: str) -> PostureScore:
@@ -135,8 +170,8 @@ class SecurityPostureScorer:
                 affected_sessions=0,
                 assessable_sessions=total_sessions,
                 findings_count=0,
-                coverage_percent=100.0,
-                evidence_quality=EvidenceQuality.FULL,
+                coverage_percent=self._calculate_dimension_coverage(dim_name, 0, total_sessions),
+                evidence_quality=self._calculate_evidence_quality([], dim_name),
                 top_contributors=[]
             ))
 
@@ -148,8 +183,8 @@ class SecurityPostureScorer:
             total_sessions=total_sessions,
             tls_sessions=0,
             sessions_with_findings=0,
-            tls_coverage_percent=100.0,
-            certificate_coverage_percent=100.0,
+            tls_coverage_percent=self._pct("tls_observed"),
+            certificate_coverage_percent=self._pct("certificates_observed"),
             dimension_scores=dimension_scores,
             top_contributors=[],
             securemailscope_version=securemailscope_version,
@@ -171,10 +206,12 @@ class SecurityPostureScorer:
         # Calculate prevalence and multiplier
         prevalence = group.affected_sessions / max(1, group.total_sessions)
 
-        if prevalence >= self.policy.prevalence_threshold_high:
-            prevalence_multiplier = self.policy.prevalence_max_multiplier
-        else:
-            prevalence_multiplier = 1.0 + (prevalence / self.policy.prevalence_threshold_high)
+        # Linear ramp from 1.0 (no prevalence) to the maximum at the threshold, flat after.
+        # Monotone in prevalence: more affected sessions can never raise the score.
+        # (Previously 1 + p/threshold below the threshold, which exceeded the cap, e.g.
+        # 1.8 at 40% vs 1.5 at 50%, so adding an affected session improved the score.)
+        ramp = min(1.0, prevalence / self.policy.prevalence_threshold_high)
+        prevalence_multiplier = 1.0 + (self.policy.prevalence_max_multiplier - 1.0) * ramp
 
         impact = severity_impact * prevalence_multiplier
         # Cap per-root-issue impact to prevent domination
@@ -206,6 +243,9 @@ class SecurityPostureScorer:
                     "severity_impact": self.policy.severity_impact.get(severity, 8.0)
                 }
 
+            if self.SEVERITY_ORDER.get(severity, 0) > self.SEVERITY_ORDER.get(groups[root_issue]["severity"], 0):
+                groups[root_issue]["severity"] = severity
+                groups[root_issue]["severity_impact"] = self.policy.severity_impact.get(severity, 8.0)
             groups[root_issue]["finding_ids"].append(finding.finding_id)
             if hasattr(finding, 'session_id') and finding.session_id:
                 groups[root_issue]["affected_sessions"].add(finding.session_id)
@@ -239,7 +279,7 @@ class SecurityPostureScorer:
         dimension_scores = []
 
         for dim_name, dim_config in self.policy.dimensions.items():
-            dim_findings = [f for f in findings if f.rule_id in dim_config.rules]
+            dim_findings = [f for f in findings if self.policy.get_dimension_by_rule(f.rule_id) == dim_name]
 
             if not dim_findings:
                 evidence_quality = self._calculate_evidence_quality([], dim_name)
@@ -295,7 +335,7 @@ class SecurityPostureScorer:
                 )
                 contributors.append(contributor)
 
-            dim_score = max(0.0, 100.0 - dim_impact)
+            dim_score = round(max(0.0, 100.0 - dim_impact), 2)
             contributors.sort(key=lambda c: c.impact_points, reverse=True)
 
             dimension_scores.append(DimensionScore(
@@ -314,8 +354,14 @@ class SecurityPostureScorer:
 
         return dimension_scores
 
+    _LEGACY_ROOT_NAMES = {"PROTO-001", "STLS-001", "TLS-001", "TLS-003", "TLS-004",
+                          "CERT-001", "CERT-003", "CERT-004", "CERT-005"}
+
     def _get_root_issue_from_finding(self, finding: FindingResult) -> str:
         """Extract root issue identifier from a finding."""
+        rule = RULE_CATALOGUE.get(finding.rule_id)
+        if finding.rule_id not in self._LEGACY_ROOT_NAMES and rule is not None:
+            return rule.title
         if finding.rule_id == "PROTO-001":
             return "Unencrypted Email Communication (Plaintext)"
         elif finding.rule_id == "STLS-001":
@@ -337,30 +383,58 @@ class SecurityPostureScorer:
         else:
             return finding.rule_id
 
+    # Coverage keys supplied by the orchestrator:
+    #   email_sessions, tls_observed (sessions with a parsed ServerHello),
+    #   certificates_observed (sessions with a parsed certificate),
+    #   certificates_encrypted (TLS 1.3 sessions whose certificates are not observable)
+    _DIM_COVERAGE_KEY = {"tls_protocol": "tls_observed", "cryptography": "tls_observed",
+                         "certificate": "certificates_observed"}
+
+    def _pct(self, key: str) -> float:
+        cov = getattr(self, "_coverage", None) or {}
+        if not cov or key not in cov:
+            return 100.0
+        total = cov.get("email_sessions", 0)
+        if total <= 0:
+            return 0.0
+        return round(100.0 * cov.get(key, 0) / total, 2)
+
     def _calculate_dimension_coverage(self, dim_name: str,
                                      tls_session_count: int,
                                      total_sessions: int) -> float:
-        """Calculate coverage percentage for a dimension."""
-        if dim_name in ["tls_protocol", "cryptography"]:
-            assessable = tls_session_count if tls_session_count > 0 else total_sessions
-        else:
-            assessable = total_sessions
-
-        if assessable == 0:
-            return 100.0
-        return 100.0
+        """Share of email sessions in which this dimension could actually be assessed."""
+        cov = getattr(self, "_coverage", None) or {}
+        if not cov:
+            return 100.0  # no coverage context supplied (unit-level use)
+        key = self._DIM_COVERAGE_KEY.get(dim_name)
+        if key is None:
+            return 100.0 if cov.get("email_sessions", 0) > 0 else 0.0
+        if key not in cov:
+            return 100.0  # not measured
+        return self._pct(key)
 
     def _calculate_evidence_quality(self, findings: List[FindingResult],
                                    dim_name: str) -> EvidenceQuality:
-        """Calculate evidence quality for a dimension."""
-        if dim_name in ["tls_protocol", "cryptography"]:
-            has_tls_finding = any(f.rule_id.startswith("TLS-") for f in findings)
-            return EvidenceQuality.FULL if has_tls_finding else EvidenceQuality.NOT_OBSERVED
-        elif dim_name == "certificate":
-            has_cert_finding = any(f.rule_id.startswith("CERT-") for f in findings)
-            return EvidenceQuality.FULL if has_cert_finding else EvidenceQuality.NOT_OBSERVED
-        else:
+        """Evidence quality derives from what was observed, not from whether findings exist."""
+        cov = getattr(self, "_coverage", None) or {}
+        key = self._DIM_COVERAGE_KEY.get(dim_name)
+        if not cov or (key is not None and key not in cov):
+            # No observation counts available: fall back to the evidence carried by findings.
+            if key is None:
+                return EvidenceQuality.FULL
+            prefix = "CERT-" if dim_name == "certificate" else "TLS-"
+            return EvidenceQuality.FULL if any(f.rule_id.startswith(prefix) for f in findings)                 else EvidenceQuality.NOT_OBSERVED
+        total = cov.get("email_sessions", 0)
+        if total <= 0:
+            return EvidenceQuality.INSUFFICIENT
+        if key is None:
             return EvidenceQuality.FULL
+        seen = cov.get(key, 0)
+        if seen >= total:
+            return EvidenceQuality.FULL
+        if seen > 0:
+            return EvidenceQuality.PARTIAL
+        return EvidenceQuality.NOT_OBSERVED
 
     def _calculate_coverage_metrics(self, findings: List[FindingResult],
                                     tls_session_count: int,
@@ -368,23 +442,27 @@ class SecurityPostureScorer:
         """Calculate coverage metrics for different aspects."""
         metrics = {}
 
-        tls_findings = [f for f in findings if f.rule_id.startswith(("TLS-", "STLS-"))]
-        metrics["tls"] = CoverageMetric(
-            dimension="tls",
-            total_sessions=tls_session_count,
-            assessable_sessions=min(len(tls_findings), tls_session_count) if tls_session_count > 0 else 0,
-            quality=EvidenceQuality.FULL if tls_session_count > 0 else EvidenceQuality.INSUFFICIENT,
-            reason="TLS sessions identified and analyzed"
-        )
-
-        cert_findings = [f for f in findings if f.rule_id.startswith("CERT-")]
-        metrics["certificate"] = CoverageMetric(
-            dimension="certificate",
-            total_sessions=tls_session_count,
-            assessable_sessions=min(len(cert_findings), tls_session_count) if tls_session_count > 0 else 0,
-            quality=EvidenceQuality.FULL if len(cert_findings) > 0 else EvidenceQuality.INSUFFICIENT,
-            reason="Certificate analysis completed on available TLS sessions"
-        )
+        cov = getattr(self, "_coverage", None) or {}
+        if cov and "certificates_observed" in cov:
+            total = cov.get("email_sessions", 0)
+            metrics["tls"] = CoverageMetric(
+                dimension="tls", total_sessions=total, assessable_sessions=cov.get("tls_observed", 0),
+                quality=self._calculate_evidence_quality([], "tls_protocol"),
+                reason="Email sessions whose TLS ServerHello was observed")
+            metrics["certificate"] = CoverageMetric(
+                dimension="certificate", total_sessions=total,
+                assessable_sessions=cov.get("certificates_observed", 0),
+                quality=self._calculate_evidence_quality([], "certificate"),
+                reason=(f"Email sessions with an observable certificate; "
+                        f"{cov.get('certificates_encrypted', 0)} TLS 1.3 session(s) encrypt certificates"))
+        else:
+            metrics["tls"] = CoverageMetric(
+                dimension="tls", total_sessions=tls_session_count, assessable_sessions=tls_session_count,
+                quality=EvidenceQuality.FULL if tls_session_count else EvidenceQuality.INSUFFICIENT,
+                reason="No coverage context supplied")
+            metrics["certificate"] = CoverageMetric(
+                dimension="certificate", total_sessions=tls_session_count, assessable_sessions=tls_session_count,
+                quality=EvidenceQuality.UNKNOWN, reason="No coverage context supplied")
 
         return metrics
 

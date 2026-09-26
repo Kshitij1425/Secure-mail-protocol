@@ -144,7 +144,9 @@ class TestPostureScorer:
             protocol_session_count=10,
             securemailscope_version="0.1.0"
         )
-        assert posture.scoring_policy_version == "1.0"
+        # The policy version recorded must be the active policy's version (bumped to 2.0
+        # when the rule catalogue and scoring semantics changed).
+        assert posture.scoring_policy_version == DEFAULT_POLICY.version == "2.0"
         assert posture.securemailscope_version == "0.1.0"
 
     def test_empty_findings_produce_maximum_score(self):
@@ -261,16 +263,20 @@ class TestPostureScorer:
         assert tls_dim.score < 100
 
     def test_unknown_properties_no_false_penalty(self):
-        """Missing/unknown evidence should not penalize score."""
-        # Empty findings - no evidence means no penalty
+        """No assessable sessions: neither penalised nor reported as 'Excellent'.
+
+        Previously this asserted 100/EXCELLENT, which presented absence of evidence as a
+        perfect posture. The correct result is an explicit UNKNOWN with no numeric score.
+        """
         posture = self.scorer.calculate_posture(
             findings=[],
             tls_session_count=0,
             protocol_session_count=0,
             securemailscope_version="0.1.0"
         )
-        assert posture.overall_score == 100.0
-        assert posture.status == ScoreStatus.EXCELLENT
+        assert posture.overall_score is None
+        assert posture.status == ScoreStatus.UNKNOWN
+        assert all(d.score is None for d in posture.dimension_scores)
 
     def test_all_critical_findings_produce_low_score(self):
         """All critical findings must produce a very low score."""
@@ -1584,8 +1590,9 @@ class TestPostureScorer:
             protocol_session_count=0,
             securemailscope_version="0.1.0"
         )
-        assert posture.overall_score == 100.0
-        assert posture.status == ScoreStatus.EXCELLENT
+        # No sessions: insufficient evidence (see test_unknown_properties_no_false_penalty)
+        assert posture.overall_score is None
+        assert posture.status == ScoreStatus.UNKNOWN
 
     def test_create_posture_from_session_results_mixed(self):
         """Creating posture from mixed session results must work."""

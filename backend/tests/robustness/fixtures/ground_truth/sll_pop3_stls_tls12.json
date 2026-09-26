@@ -1,0 +1,29 @@
+{
+  "name": "sll_pop3_stls_tls12",
+  "expected_protocol": "POP3",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [
+    "CERT-005"
+  ],
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "POP3",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.2",
+      "findings": [
+        "CERT-005"
+      ],
+      "certificates": 1,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": "complete"
+    }
+  ],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "Linux SLL link layer (DLT 113)."
+}

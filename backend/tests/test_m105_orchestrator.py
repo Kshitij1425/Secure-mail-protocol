@@ -5,6 +5,7 @@ import pytest
 import os
 import tempfile
 import subprocess
+import sys
 from pathlib import Path
 
 from securemailscope.core.orchestrator import Orchestrator
@@ -52,7 +53,7 @@ def test_cli_integration_with_actual_pipeline():
         # Run CLI process
         cli_path = Path(__file__).parent.parent / "securemailscope/cli.py"
         result = subprocess.run(
-            ["python", str(cli_path), "analyze", pcap, "--output-dir", tmpdir, "--json", "--html"],
+            [sys.executable, str(cli_path), "analyze", pcap, "--output-dir", tmpdir, "--json", "--html"],
             capture_output=True,
             text=True
         )
@@ -68,7 +69,10 @@ def test_cli_integration_with_actual_pipeline():
 
         # Verify CLI terminal summary
         assert "Security Posture:" in result.stdout
-        assert "Good" in result.stdout or "88/100" in result.stdout
+        # TLS 1.3 encrypts the certificate, so no certificate finding is possible; the
+        # earlier "Good / 88" expectation relied on a fixture that leaked a cleartext
+        # certificate after a TLS 1.3 ServerHello (impossible on the wire).
+        assert "Security Posture: 100/100" in result.stdout and "Excellent" in result.stdout
         assert "Email sessions: 1" in result.stdout
 
 

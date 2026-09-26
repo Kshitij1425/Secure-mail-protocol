@@ -1,0 +1,13 @@
+# NOTE: not built/verified in the audit environment (no Docker available).
+services:
+  api:
+    build: ./backend
+    ports:
+      - "127.0.0.1:8000:8000"   # loopback only: the API is unauthenticated
+    volumes:
+      - sms-data:/data
+    environment:
+      SECUREMAILSCOPE_CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
+
+volumes:
+  sms-data:

@@ -54,7 +54,7 @@ class DimensionScore:
     """Score for a single security dimension."""
     dimension: str
     name: str
-    score: float  # 0-100
+    score: Optional[float]  # 0-100, None when not assessable
     weight: float
     affected_sessions: int
     assessable_sessions: int
@@ -67,7 +67,7 @@ class DimensionScore:
         return {
             "dimension": self.dimension,
             "name": self.name,
-            "score": round(self.score, 2),
+            "score": round(self.score, 2) if self.score is not None else None,
             "weight": self.weight,
             "affected_sessions": self.affected_sessions,
             "assessable_sessions": self.assessable_sessions,
@@ -95,7 +95,7 @@ class PostureScore:
 
     This is the main output of the M9 scoring engine.
     """
-    overall_score: float  # 0-100
+    overall_score: Optional[float]  # 0-100; None = insufficient evidence
     status: ScoreStatus
     scoring_policy_version: str
     analyzed_at: datetime
@@ -125,7 +125,7 @@ class PostureScore:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            "overall_score": round(self.overall_score, 2),
+            "overall_score": round(self.overall_score, 2) if self.overall_score is not None else None,
             "status": self.status.value,
             "scoring_policy_version": self.scoring_policy_version,
             "analyzed_at": self.analyzed_at.isoformat(),
@@ -157,7 +157,9 @@ class PostureScore:
     def get_summary(self) -> str:
         """Generate a human-readable summary."""
         lines = [
-            f"Security Posture: {self.overall_score:.0f}/100 ({self.status.value})",
+            (f"Security Posture: {self.overall_score:.0f}/100 ({self.status.value})"
+             if self.overall_score is not None else
+             "Security Posture: not assessable (no email sessions with evidence)"),
             f"Sessions analyzed: {self.total_sessions}",
             f"TLS sessions: {self.tls_sessions}",
             f"Findings: {self.findings_count}",
@@ -165,7 +167,7 @@ class PostureScore:
             "Dimension Scores:"
         ]
         for d in self.dimension_scores:
-            lines.append(f"  {d.name}: {d.score:.0f}/100")
+            lines.append(f"  {d.name}: {d.score:.0f}/100" if d.score is not None else f"  {d.name}: n/a")
 
         if self.top_contributors:
             lines.append("")

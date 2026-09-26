@@ -19,10 +19,11 @@ class ScoreStatus(Enum):
     UNKNOWN = "Unknown"
 
 
-# Mapping from M8 Severity to numeric impact (0-100 scale for a single finding)
-# CRITICAL findings have highest impact, INFO findings have minimal impact
-# Values calibrated so a single CRITICAL finding at 100% prevalence drops
-# the score into the Critical band (<40), satisfying test expectations
+# Points removed from 100 for one root cause at minimal prevalence (before the
+# prevalence multiplier, which ramps linearly up to x1.5 at 50% of sessions).
+# These weights are a policy choice (see "Scoring" in ARCHITECTURE.md),
+# not an empirically calibrated risk model: e.g. one CRITICAL root cause affecting
+# every session costs 45 x 1.5 = 67.5 points and lands in the Critical band.
 SEVERITY_IMPACT_MAP = {
     "CRITICAL": 45.0,
     "HIGH": 20.0,
@@ -55,37 +56,43 @@ class DimensionConfig:
     rules: List[str] = field(default_factory=list)  # M8 rule IDs that belong to this dimension
 
 
-# Define scoring dimensions based on M8 rule categories
+# Scoring dimensions. Rule membership is derived from the rule catalogue so that
+# every rule the engine can emit is attributed to exactly one dimension.
+def _rules_for(dimension: str) -> List[str]:
+    from securemailscope.rules.engine import RULE_CATALOGUE
+    return [r.rule_id for r in RULE_CATALOGUE.values() if r.dimension == dimension]
+
+
 DIMENSIONS = {
     "tls_protocol": DimensionConfig(
         name="TLS Protocol",
         weight=0.20,
-        description="TLS version security (deprecated TLS 1.0/1.1, SSL variants)",
-        rules=["TLS-001"]
+        description="Negotiated TLS/SSL version and handshake outcome",
+        rules=_rules_for("tls_protocol")
     ),
     "cryptography": DimensionConfig(
         name="Cryptographic Algorithms",
         weight=0.15,
-        description="Cipher suites, key exchange, signature algorithms",
-        rules=["TLS-003", "TLS-004"]
+        description="Cipher suites, key exchange, forward secrecy",
+        rules=_rules_for("cryptography")
     ),
     "certificate": DimensionConfig(
         name="Certificate Security",
         weight=0.25,
-        description="Certificate validity, key strength, chain trust",
-        rules=["CERT-001", "CERT-003", "CERT-005"]
+        description="Certificate validity, key strength, signature, hostname and chain linkage",
+        rules=_rules_for("certificate")
     ),
     "starttls": DimensionConfig(
         name="STARTTLS Security",
         weight=0.20,
         description="STARTTLS negotiation and upgrade behavior",
-        rules=["STLS-001"]
+        rules=_rules_for("starttls")
     ),
     "protocol": DimensionConfig(
         name="Protocol Security",
         weight=0.20,
-        description="General protocol security (plaintext, downgrade)",
-        rules=["PROTO-001"]
+        description="Plaintext sessions and plaintext authentication",
+        rules=_rules_for("protocol")
     ),
 }
 
@@ -93,7 +100,7 @@ DIMENSIONS = {
 @dataclass
 class ScoringPolicy:
     """Complete scoring policy configuration."""
-    version: str = "1.0"
+    version: str = "2.0"
     dimensions: Dict[str, DimensionConfig] = field(default_factory=lambda: DIMENSIONS)
     severity_impact: Dict[str, float] = field(default_factory=lambda: SEVERITY_IMPACT_MAP)
     score_bands: Dict[tuple, ScoreStatus] = field(default_factory=lambda: SCORE_BANDS)
@@ -111,12 +118,16 @@ class ScoringPolicy:
                 return dim_name
         return "protocol"  # Default fallback
 
-    def get_status(self, score: float) -> ScoreStatus:
-        """Map a numeric score to a status."""
-        if score < 0 or score > 100:
+    def get_status(self, score) -> ScoreStatus:
+        """Map a numeric score to a status.
+
+        Bands are applied by lower bound so fractional scores (e.g. 89.5) never
+        fall between bands. ``None`` means the posture could not be assessed.
+        """
+        if score is None or score < 0 or score > 100:
             return ScoreStatus.UNKNOWN
-        for (min_score, max_score), status in self.score_bands.items():
-            if min_score <= score <= max_score:
+        for (min_score, _max_score), status in sorted(self.score_bands.items(), key=lambda kv: -kv[0][0]):
+            if score >= min_score:
                 return status
         return ScoreStatus.UNKNOWN
 

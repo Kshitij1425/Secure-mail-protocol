@@ -1,639 +1,457 @@
 """
-FastAPI application for SecureMailScope API.
-Main entry point for the REST API server.
+FastAPI application for SecureMailScope.
+
+All handlers are synchronous (``def``) so FastAPI runs them in its worker thread
+pool: CPU-bound analysis never blocks the event loop.
 """
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from typing import Optional, List
+import json
 import logging
 import os
+from contextlib import asynccontextmanager
+from typing import List, Optional
 
-from securemailscope.api.config import get_settings, Settings
-from securemailscope.api.database import get_db, init_db, CaptureDB, SessionDB, FindingDB, CertificateDB, AnomalyDB, ReportDB
-from securemailscope.api.schemas import (
-    AnalyzeUploadRequest,
-    CaptureSummary,
-    CaptureDetail,
-    SessionSummary,
-    SessionDetail,
-    FindingSummary,
-    FindingDetail,
-    CertificateSummary,
-    CertificateDetail,
-    AnomalySummary,
-    AnomalyDetail,
-    PostureResponse,
-    ReportSummary,
-    AnalysisResponse,
-    AnalysisJobStatus,
-    HealthResponse,
-    ErrorResponse,
-    ErrorDetail
-)
-from securemailscope.api.services.analyzers import AnalysisService
-import orjson
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import func, text
+from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-logger = logging.getLogger(__name__)
+from securemailscope import __version__
+from securemailscope.api.config import get_settings
+from securemailscope.api.database import (AnomalyDB, CaptureDB, CertificateDB, FindingDB, ReportDB, SessionDB,
+                                          SessionFindingDB, get_db, init_db)
+from securemailscope.api.schemas import (AnalysisResponse, AnomalyDetail, AnomalySummary, CaptureDetail,
+                                         CaptureSummary, CertificateDetail, CertificateSummary, FindingDetail,
+                                         FindingStatusUpdate, FindingSummary, HealthResponse, PostureResponse,
+                                         ReportSummary, SessionDetail, SessionSummary)
+from securemailscope.api.services.analyzers import AnalysisService, ServiceError
 
-# Create FastAPI app
-app = FastAPI(
-    title="SecureMailScope API",
-    description="REST API for SecureMailScope TLS security analysis",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json"
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Global service instance
-analysis_service = AnalysisService()
+logger = logging.getLogger("securemailscope.api")
+FINDING_STATUSES = {"open", "acknowledged", "in_progress", "resolved", "false_positive"}
+MAX_PAGE = 5000
 
 
-@app.on_event("startup")
-def startup_event():
-    """Initialize database and create necessary directories on startup."""
-    init_db()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     settings = get_settings()
-
-    # Create directories
     os.makedirs(settings.upload_dir, exist_ok=True)
     os.makedirs(settings.reports_dir, exist_ok=True)
+    init_db()
+    yield
 
 
+app = FastAPI(title="SecureMailScope API", description="Passive email TLS posture analysis of PCAP captures",
+              version=__version__, lifespan=lifespan)
+
+
+class BodySizeLimitMiddleware:
+    """Reject request bodies above the upload cap while they stream in, before the
+    multipart parser spools them to disk (covers chunked uploads without Content-Length)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") not in ("POST", "PUT", "PATCH"):
+            return await self.app(scope, receive, send)
+        limit = get_settings().max_upload_size_bytes + 64 * 1024  # multipart framing overhead
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                try:
+                    if int(value) > limit:
+                        return await _too_large(send)
+                except ValueError:
+                    return await _too_large(send)
+        seen = 0
+
+        async def limited_receive():
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > limit:
+                    raise _BodyTooLarge()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _BodyTooLarge:
+            await _too_large(send)
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+async def _too_large(send):
+    body = json.dumps({"error": {"code": "FILE_TOO_LARGE", "message": "File too large"},
+                       "detail": "File too large"}).encode()
+    await send({"type": "http.response.start", "status": 413,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cache-Control", "no-store")
+    if not request.url.path.startswith(("/docs", "/redoc")):
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    return response
+
+
+app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origins, allow_credentials=False,
+                   allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Accept"])
+app.add_middleware(BodySizeLimitMiddleware)
+
+service = AnalysisService()
+analysis_service = service  # backwards-compatible name
+
+
+# -------------------------------------------------------------- error envelope
+_CODES = {400: "BAD_REQUEST", 404: "NOT_FOUND", 409: "CONFLICT", 413: "FILE_TOO_LARGE", 422: "VALIDATION_ERROR",
+          500: "INTERNAL_ERROR", 501: "NOT_IMPLEMENTED", 503: "SERVICE_UNAVAILABLE"}
+
+
+def _error(status: int, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"error": {"code": _CODES.get(status, "ERROR"), "message": message},
+                                                     "detail": message})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(_request, exc: StarletteHTTPException):
+    return _error(exc.status_code, str(exc.detail) if exc.detail else "Error")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request, exc: RequestValidationError):
+    fields = sorted({".".join(str(p) for p in e.get("loc", [])[1:]) or "request" for e in exc.errors()})
+    return _error(422, f"Invalid request parameter(s): {', '.join(fields)[:200]}")
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(_request, exc: Exception):
+    logger.exception("Unhandled API error")
+    return _error(500, "Internal server error")
+
+
+def _svc(e: ServiceError):
+    raise HTTPException(status_code=e.status, detail=e.message)
+
+
+# ---------------------------------------------------------------------- health
 @app.get("/", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
-    settings = get_settings()
-
-    # Check database connection
+@app.get("/health", response_model=HealthResponse)
+def health_check(db: Session = Depends(get_db)):
     try:
-        db = next(get_db())
         db.execute(text("SELECT 1"))
-        database_connected = True
-    except:
-        database_connected = False
-
-    return HealthResponse(
-        status="healthy",
-        version=settings.api_version,
-        database_connected=database_connected
-    )
+        ok = True
+    except Exception:
+        ok = False
+    return HealthResponse(status="healthy" if ok else "degraded", version=__version__, database_connected=ok)
 
 
+# --------------------------------------------------------------------- analyze
 @app.post("/analyze", response_model=AnalysisResponse)
-async def analyze_capture(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """
-    Analyze a PCAP/PCAPNG file.
-
-    Accepts a PCAP file and submits it for analysis.
-    Runs synchronously for small files, asynchronously for large files.
-    """
-    # Validate file type
-    settings = get_settings()
-    allowed_extensions = {ext.lower() for ext in settings.allowed_extensions}
-    file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
-
-    if not file_extension or f".{file_extension}" not in allowed_extensions:
-        raise HTTPException(
-            status_code=422,
-            detail=f"File type {file_extension} not allowed. "
-                   f"Allowed types: {', '.join(settings.allowed_extensions)}"
-        )
-
-    # Validate file size (peek without draining stream)
-    # Using SpooledTemporaryFile to get file size, or read completely then reset
-    # We must read completely to know the true size if it's spooled.
-    content = await file.read()
-    file_size = len(content)
-    await file.seek(0)
-
-    if file_size > settings.max_upload_size_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum size is {settings.max_upload_size_mb} MB"
-        )
-
-    # Save file and create capture record
-    if file_size == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded file is empty"
-        )
-
-    # Save capture and start analysis
+def analyze_capture(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload a PCAP/PCAPNG capture and run the full analysis pipeline synchronously."""
     try:
-        capture, file_path = analysis_service.save_capture(file, db)
+        tmp, sha, size, fmt, display = service.receive_upload(file.file, file.filename)
+        capture = service.create_capture(tmp, sha, size, fmt, display, db)
+        service.run_analysis(capture, db)
+    except ServiceError as e:
+        _svc(e)
+    return AnalysisResponse(capture_id=capture.capture_id, status=capture.analysis_status, message="Analysis completed")
 
-        # Re-check actual file size after save for background-task threshold
-        file_size = file_path.stat().st_size
-        if file_size > 50 * 1024 * 1024:  # 50MB
-            background_tasks.add_task(
-                analysis_service.run_analysis,
-                capture,
-                file_path,
-                db
-            )
-            status = "processing"
-            message = "Analysis started in background"
-        else:
-            # Run synchronously for small files
-            capture = analysis_service.run_analysis(capture, file_path, db)
-            status = "completed"
-            message = "Analysis completed"
 
-        return AnalysisResponse(
-            capture_id=capture.capture_id,
-            status=status,
-            message=message
-        )
+# -------------------------------------------------------------------- captures
+def _capture_or_404(db: Session, capture_id: str) -> CaptureDB:
+    c = db.query(CaptureDB).filter(CaptureDB.capture_id == capture_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Capture not found")
+    return c
 
-    except Exception as e:
-        logger.error(f"Error processing capture: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}"
-        )
+
+def _count(db, model, capture_id, *filters) -> int:
+    return db.query(func.count(model.id)).filter(model.capture_id == capture_id, *filters).scalar() or 0
 
 
 @app.get("/captures", response_model=List[CaptureSummary])
-async def list_captures(
-    db: Session = Depends(get_db),
-    status: Optional[str] = None
-):
-    """
-    List all captures.
-
-    Can optionally filter by analysis status.
-    """
-    query = db.query(CaptureDB)
-
+def list_captures(db: Session = Depends(get_db), status: Optional[str] = None,
+                  limit: int = Query(500, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    q = db.query(CaptureDB)
     if status:
-        query = query.filter(CaptureDB.analysis_status == status)
-
-    captures = query.order_by(CaptureDB.upload_timestamp.desc()).all()
-
-    # Convert to summary models
-    summaries = []
-    for capture in captures:
-        summary = CaptureSummary(
-            capture_id=capture.capture_id,
-            filename=capture.filename,
-            file_hash=capture.file_hash,
-            upload_timestamp=capture.upload_timestamp,
-            analysis_status=capture.analysis_status,
-            packet_count=capture.packet_count,
-            stream_count=capture.stream_count,
-            email_session_count=capture.email_session_count,
-            tls_session_count=capture.tls_session_count,
-            posture_score=capture.posture_score,
-            posture_status=capture.posture_status,
-            findings_count=db.query(FindingDB).filter(FindingDB.capture_id == capture.capture_id).count(),
-            anomalies_count=db.query(AnomalyDB).filter(AnomalyDB.capture_id == capture.capture_id).count()
-        )
-        summaries.append(summary)
-
-    return summaries
+        q = q.filter(CaptureDB.analysis_status == status)
+    out = []
+    for c in q.order_by(CaptureDB.upload_timestamp.desc(), CaptureDB.id.desc()).offset(offset).limit(limit):
+        s = CaptureSummary.model_validate(c)
+        s.findings_count = _count(db, FindingDB, c.capture_id)
+        s.anomalies_count = _count(db, AnomalyDB, c.capture_id, AnomalyDB.is_anomaly.is_(True))
+        out.append(s)
+    return out
 
 
 @app.get("/captures/{capture_id}", response_model=CaptureDetail)
-async def get_capture(
-    capture_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific capture."""
-    capture = db.query(CaptureDB).filter(CaptureDB.capture_id == capture_id).first()
-
-    if not capture:
-        raise HTTPException(
-            status_code=404,
-            detail="Capture not found"
-        )
-
-    return CaptureDetail(
-        capture_id=capture.capture_id,
-        filename=capture.filename,
-        file_hash=capture.file_hash,
-        file_size=capture.file_size,
-        upload_timestamp=capture.upload_timestamp,
-        analysis_status=capture.analysis_status,
-        analysis_timestamp=capture.analysis_timestamp,
-        packet_count=capture.packet_count,
-        stream_count=capture.stream_count,
-        email_session_count=capture.email_session_count,
-        tls_session_count=capture.tls_session_count,
-        posture_score=capture.posture_score,
-        posture_status=capture.posture_status,
-        scoring_policy_version=capture.scoring_policy_version,
-        ml_engine_version=capture.ml_engine_version,
-        ml_anomalies_detected=capture.ml_anomalies_detected,
-        findings_count=db.query(FindingDB).filter(FindingDB.capture_id == capture.capture_id).count(),
-        sessions_count=db.query(SessionDB).filter(SessionDB.capture_id == capture.capture_id).count(),
-        certificates_count=db.query(CertificateDB).filter(CertificateDB.capture_id == capture.capture_id).count()
-    )
+def get_capture(capture_id: str, db: Session = Depends(get_db)):
+    c = _capture_or_404(db, capture_id)
+    d = CaptureDetail.model_validate(c)
+    d.findings_count = _count(db, FindingDB, capture_id)
+    d.anomalies_count = _count(db, AnomalyDB, capture_id, AnomalyDB.is_anomaly.is_(True))
+    d.sessions_count = _count(db, SessionDB, capture_id)
+    d.certificates_count = _count(db, CertificateDB, capture_id)
+    d.reports_count = _count(db, ReportDB, capture_id)
+    d.severity_counts = {sev: n for sev, n in db.query(FindingDB.severity, func.count(FindingDB.id))
+                         .filter(FindingDB.capture_id == capture_id).group_by(FindingDB.severity)}
+    meta = json.loads(c.metadata_json) if c.metadata_json else {}
+    d.coverage = meta.get("coverage", {})
+    d.ingestion = {k: meta.get(k) for k in ("total_packets", "valid_packets", "malformed_packets", "ignored_non_ip",
+                                            "truncated", "truncation_reason", "link_type", "format")}
+    return d
 
 
 @app.get("/captures/{capture_id}/sessions", response_model=List[SessionSummary])
-async def list_capture_sessions(
-    capture_id: str,
-    db: Session = Depends(get_db)
-):
-    """List all sessions for a capture."""
-    sessions = db.query(SessionDB).filter(SessionDB.capture_id == capture_id).all()
-
-    return sessions
+def list_capture_sessions(capture_id: str, db: Session = Depends(get_db),
+                          limit: int = Query(MAX_PAGE, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    _capture_or_404(db, capture_id)
+    return (db.query(SessionDB).filter(SessionDB.capture_id == capture_id)
+            .order_by(SessionDB.start_timestamp, SessionDB.id).offset(offset).limit(limit).all())
 
 
 @app.get("/captures/{capture_id}/findings", response_model=List[FindingSummary])
-async def list_capture_findings(
-    capture_id: str,
-    db: Session = Depends(get_db)
-):
-    """List all findings for a capture."""
-    findings = db.query(FindingDB).filter(FindingDB.capture_id == capture_id).all()
+def list_capture_findings(capture_id: str, db: Session = Depends(get_db),
+                          limit: int = Query(MAX_PAGE, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    _capture_or_404(db, capture_id)
+    return (db.query(FindingDB).filter(FindingDB.capture_id == capture_id)
+            .order_by(FindingDB.priority, FindingDB.id).offset(offset).limit(limit).all())
 
-    return findings
+
+@app.get("/captures/{capture_id}/certificates", response_model=List[CertificateSummary])
+def list_capture_certificates(capture_id: str, db: Session = Depends(get_db)):
+    _capture_or_404(db, capture_id)
+    return (db.query(CertificateDB).filter(CertificateDB.capture_id == capture_id)
+            .order_by(CertificateDB.session_id, CertificateDB.chain_position).limit(MAX_PAGE).all())
 
 
 @app.get("/captures/{capture_id}/anomalies", response_model=List[AnomalySummary])
-async def list_capture_anomalies(
-    capture_id: str,
-    db: Session = Depends(get_db)
-):
-    """List all anomalies for a capture."""
-    anomalies = db.query(AnomalyDB).filter(AnomalyDB.capture_id == capture_id).all()
-
-    return anomalies
+def list_capture_anomalies(capture_id: str, db: Session = Depends(get_db)):
+    _capture_or_404(db, capture_id)
+    return (db.query(AnomalyDB).filter(AnomalyDB.capture_id == capture_id)
+            .order_by(AnomalyDB.anomaly_score, AnomalyDB.id).limit(MAX_PAGE).all())
 
 
 @app.get("/captures/{capture_id}/posture", response_model=PostureResponse)
-async def get_capture_posture(
-    capture_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get posture analysis for a capture from persisted analysis."""
-    capture = db.query(CaptureDB).filter(CaptureDB.capture_id == capture_id).first()
-    if not capture:
-        raise HTTPException(status_code=404, detail="Capture not found")
-    if capture.posture_score is None:
+def get_capture_posture(capture_id: str, db: Session = Depends(get_db)):
+    """The posture computed by the scoring engine at analysis time (not re-derived)."""
+    c = _capture_or_404(db, capture_id)
+    if c.analysis_status != "completed" or not c.posture_json:
         raise HTTPException(status_code=404, detail="Posture not yet computed")
+    p = json.loads(c.posture_json)
+    doc = json.loads(c.document_json) if c.document_json else {}
+    meta = p.get("metadata", {})
+    cov = p.get("coverage", {})
+    total = meta.get("total_sessions", 0)
     return PostureResponse(
-        capture_id=capture_id,
-        posture_score=capture.posture_score,
-        posture_status=capture.posture_status,
-        scoring_policy_version=capture.scoring_policy_version,
-        analysis_timestamp=capture.analysis_timestamp
+        capture_id=capture_id, overall_score=p.get("overall_score"), status=p.get("status", "Unknown"),
+        scoring_policy_version=p.get("scoring_policy_version", "unknown"), analysis_timestamp=c.analysis_timestamp,
+        total_sessions=total, tls_sessions=meta.get("tls_sessions", 0),
+        sessions_with_findings=meta.get("sessions_with_findings", 0), findings_count=meta.get("findings_count", 0),
+        tls_coverage_percent=meta.get("tls_coverage_percent", 0.0),
+        certificate_coverage_percent=meta.get("certificate_coverage_percent", 0.0),
+        coverage_percent=round(100.0 * cov.get("tls_observed", 0) / total, 2) if total else 0.0,
+        dimension_scores=p.get("dimensions", []), top_contributors=p.get("top_contributors", []),
+        root_cause_groups=list((p.get("root_cause_groups") or {}).values()),
+        remediation_plan=doc.get("remediation_plan", []),
     )
 
 
+@app.get("/captures/{capture_id}/document")
+def get_capture_document(capture_id: str, db: Session = Depends(get_db)):
+    """The canonical analysis document (identical to the JSON report)."""
+    c = _capture_or_404(db, capture_id)
+    if not c.document_json:
+        raise HTTPException(status_code=404, detail="Analysis not available")
+    return JSONResponse(json.loads(c.document_json))
+
+
+@app.post("/captures/{capture_id}/reports", response_model=ReportSummary)
+def create_report(capture_id: str, format: str = Query(..., pattern="^(json|html|pdf)$"), db: Session = Depends(get_db)):
+    c = _capture_or_404(db, capture_id)
+    try:
+        return service.generate_report(c, format, db)
+    except ServiceError as e:
+        _svc(e)
+
+
+# -------------------------------------------------------------------- sessions
 @app.get("/sessions", response_model=List[SessionSummary])
-async def list_sessions(
-    db: Session = Depends(get_db),
-    capture_id: Optional[str] = None,
-    protocol: Optional[str] = None
-):
-    """List all sessions with optional filtering."""
-    query = db.query(SessionDB)
-
+def list_sessions(db: Session = Depends(get_db), capture_id: Optional[str] = None, protocol: Optional[str] = None,
+                  limit: int = Query(1000, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    q = db.query(SessionDB)
     if capture_id:
-        query = query.filter(SessionDB.capture_id == capture_id)
-
+        q = q.filter(SessionDB.capture_id == capture_id)
     if protocol:
-        query = query.filter(SessionDB.protocol == protocol)
-
-    sessions = query.order_by(SessionDB.start_timestamp.desc()).all()
-
-    return sessions
+        q = q.filter(SessionDB.protocol == protocol.upper())
+    return q.order_by(SessionDB.start_timestamp.desc(), SessionDB.id).offset(offset).limit(limit).all()
 
 
 @app.get("/sessions/{session_id}", response_model=SessionDetail)
-async def get_session(
-    session_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific session."""
-    session = db.query(SessionDB).filter(SessionDB.session_id == session_id).first()
-
-    if not session:
-        raise HTTPException(
-            status_code=404,
-            detail="Session not found"
-        )
-
-    return SessionDetail(
-        session_id=session.session_id,
-        protocol=session.protocol,
-        source_ip=session.source_ip,
-        source_port=session.source_port,
-        dest_ip=session.dest_ip,
-        dest_port=session.dest_port,
-        start_timestamp=session.start_timestamp,
-        end_timestamp=session.end_timestamp,
-        packet_count=session.packet_count,
-        byte_count=session.byte_count,
-        starttls_state=session.starttls_state,
-        tls_version=session.tls_version,
-        cipher_suite=session.cipher_suite,
-        key_exchange=session.key_exchange,
-        has_forward_secrecy=session.has_forward_secrecy,
-        handshake_complete=session.handshake_complete,
-        has_findings=session.has_findings,
-        has_anomaly=session.has_anomaly,
-        anomaly_score=session.anomaly_score,
-        anomaly_level=session.anomaly_level
-    )
+def get_session(session_id: str, db: Session = Depends(get_db)):
+    s = db.query(SessionDB).filter(SessionDB.session_id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    d = SessionDetail.model_validate(s)
+    d.findings = [f for (f,) in db.query(SessionFindingDB.finding_id).filter(SessionFindingDB.session_id == session_id)]
+    d.certificates = [c for (c,) in db.query(CertificateDB.certificate_id).filter(CertificateDB.session_id == session_id)
+                      .order_by(CertificateDB.chain_position)]
+    a = db.query(AnomalyDB.id).filter(AnomalyDB.session_id == session_id).first()
+    d.anomaly_id = a[0] if a else None
+    d.detail = json.loads(s.detail_json) if s.detail_json else {}
+    return d
 
 
+# -------------------------------------------------------------------- findings
 @app.get("/findings", response_model=List[FindingSummary])
-async def list_findings(
-    db: Session = Depends(get_db),
-    capture_id: Optional[str] = None,
-    severity: Optional[str] = None
-):
-    """List all findings with optional filtering."""
-    query = db.query(FindingDB)
-
+def list_findings(db: Session = Depends(get_db), capture_id: Optional[str] = None, severity: Optional[str] = None,
+                  rule_id: Optional[str] = None, session_id: Optional[str] = None,
+                  limit: int = Query(1000, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    q = db.query(FindingDB)
     if capture_id:
-        query = query.filter(FindingDB.capture_id == capture_id)
-
+        q = q.filter(FindingDB.capture_id == capture_id)
     if severity:
-        query = query.filter(FindingDB.severity == severity)
+        q = q.filter(FindingDB.severity == severity.upper())
+    if rule_id:
+        q = q.filter(FindingDB.rule_id == rule_id)
+    if session_id:
+        q = q.filter(FindingDB.session_id == session_id)
+    return q.order_by(FindingDB.capture_id, FindingDB.priority, FindingDB.id).offset(offset).limit(limit).all()
 
-    findings = query.order_by(FindingDB.timestamp.desc()).all()
 
-    return findings
+def _finding_detail(db: Session, f: FindingDB) -> FindingDetail:
+    d = FindingDetail.model_validate({**{k: getattr(f, k) for k in FindingSummary.model_fields},
+                                      "explanation": f.explanation, "recommendation": f.recommendation,
+                                      "references": f.references, "timestamp": f.timestamp})
+    d.evidence = json.loads(f.evidence) if f.evidence else {}
+    d.evidence_frames = json.loads(f.evidence_frames) if f.evidence_frames else []
+    d.affected_sessions = [s for (s,) in db.query(SessionFindingDB.session_id)
+                           .filter(SessionFindingDB.finding_id == f.finding_id)]
+    return d
 
 
 @app.get("/findings/{finding_id}", response_model=FindingDetail)
-async def get_finding(
-    finding_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific finding."""
-    finding = db.query(FindingDB).filter(FindingDB.finding_id == finding_id).first()
-
-    if not finding:
-        raise HTTPException(
-            status_code=404,
-            detail="Finding not found"
-        )
-
-    return FindingDetail(
-        finding_id=finding.finding_id,
-        rule_id=finding.rule_id,
-        title=finding.title,
-        severity=finding.severity,
-        category=finding.category,
-        session_id=finding.session_id,
-        confidence=finding.confidence,
-        risk_contribution=finding.risk_contribution,
-        explanation=finding.explanation,
-        recommendation=finding.recommendation,
-        evidence=finding.evidence,
-        timestamp=finding.timestamp,
-        affected_sessions=[]  # Would need to join with session_findings table
-    )
+def get_finding(finding_id: str, db: Session = Depends(get_db)):
+    f = db.query(FindingDB).filter(FindingDB.finding_id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return _finding_detail(db, f)
 
 
+@app.patch("/findings/{finding_id}/status", response_model=FindingDetail)
+def update_finding_status(finding_id: str, body: FindingStatusUpdate, db: Session = Depends(get_db)):
+    """Analyst triage state. Does not alter the finding's evidence, severity or the posture score."""
+    if body.status not in FINDING_STATUSES:
+        raise HTTPException(status_code=422, detail=f"status must be one of {sorted(FINDING_STATUSES)}")
+    f = db.query(FindingDB).filter(FindingDB.finding_id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    f.status = body.status
+    db.commit()
+    db.refresh(f)
+    return _finding_detail(db, f)
+
+
+# ------------------------------------------------------------------- anomalies
 @app.get("/anomalies", response_model=List[AnomalySummary])
-async def list_anomalies(
-    db: Session = Depends(get_db),
-    capture_id: Optional[str] = None,
-    is_anomaly: Optional[bool] = None
-):
-    """List all anomalies with optional filtering."""
-    query = db.query(AnomalyDB)
-
+def list_anomalies(db: Session = Depends(get_db), capture_id: Optional[str] = None, is_anomaly: Optional[bool] = None,
+                   limit: int = Query(1000, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    q = db.query(AnomalyDB)
     if capture_id:
-        query = query.filter(AnomalyDB.capture_id == capture_id)
-
+        q = q.filter(AnomalyDB.capture_id == capture_id)
     if is_anomaly is not None:
-        query = query.filter(AnomalyDB.is_anomaly == is_anomaly)
-
-    anomalies = query.order_by(AnomalyDB.timestamp.desc()).all()
-
-    return anomalies
+        q = q.filter(AnomalyDB.is_anomaly.is_(is_anomaly))
+    return q.order_by(AnomalyDB.capture_id, AnomalyDB.anomaly_score, AnomalyDB.id).offset(offset).limit(limit).all()
 
 
 @app.get("/anomalies/{anomaly_id}", response_model=AnomalyDetail)
-async def get_anomaly(
-    anomaly_id: int,
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific anomaly."""
-    anomaly = db.query(AnomalyDB).filter(AnomalyDB.id == anomaly_id).first()
-
-    if not anomaly:
-        raise HTTPException(
-            status_code=404,
-            detail="Anomaly not found"
-        )
-
-    # Parse features_json if present
-    features = {}
-    if anomaly.features_json:
-        try:
-            features = orjson.loads(anomaly.features_json)
-        except:
-            pass
-
-    return AnomalyDetail(
-        id=anomaly.id,
-        capture_id=anomaly.capture_id,
-        session_id=anomaly.session_id,
-        is_anomaly=anomaly.is_anomaly,
-        anomaly_score=anomaly.anomaly_score,
-        anomaly_level=anomaly.anomaly_level,
-        model_version=anomaly.model_version,
-        explanation=anomaly.explanation,
-        features=features,
-        timestamp=anomaly.timestamp
-    )
+def get_anomaly(anomaly_id: int, db: Session = Depends(get_db)):
+    a = db.query(AnomalyDB).filter(AnomalyDB.id == anomaly_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Anomaly not found")
+    d = AnomalyDetail.model_validate(a)
+    try:
+        d.features = json.loads(a.features_json) if a.features_json else {}
+    except ValueError:
+        d.features = {}
+    return d
 
 
+# ---------------------------------------------------------------- certificates
 @app.get("/certificates", response_model=List[CertificateSummary])
-async def list_certificates(
-    db: Session = Depends(get_db),
-    capture_id: Optional[str] = None,
-    session_id: Optional[str] = None
-):
-    """List all certificates with optional filtering."""
-    query = db.query(CertificateDB)
-
+def list_certificates(db: Session = Depends(get_db), capture_id: Optional[str] = None, session_id: Optional[str] = None,
+                      limit: int = Query(1000, ge=1, le=MAX_PAGE), offset: int = Query(0, ge=0)):
+    q = db.query(CertificateDB)
     if capture_id:
-        query = query.filter(CertificateDB.capture_id == capture_id)
-
+        q = q.filter(CertificateDB.capture_id == capture_id)
     if session_id:
-        query = query.filter(CertificateDB.session_id == session_id)
-
-    certificates = query.order_by(CertificateDB.not_after.desc()).all()
-
-    return certificates
+        q = q.filter(CertificateDB.session_id == session_id)
+    return q.order_by(CertificateDB.capture_id, CertificateDB.session_id, CertificateDB.chain_position) \
+        .offset(offset).limit(limit).all()
 
 
-@app.get("/certificates/{fingerprint}", response_model=CertificateDetail)
-async def get_certificate(
-    fingerprint: str,
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific certificate."""
-    certificate = db.query(CertificateDB).filter(CertificateDB.fingerprint_sha256 == fingerprint).first()
-
-    if not certificate:
-        raise HTTPException(
-            status_code=404,
-            detail="Certificate not found"
-        )
-
-    return CertificateDetail(
-        fingerprint_sha256=certificate.fingerprint_sha256,
-        subject=certificate.subject,
-        issuer=certificate.issuer,
-        serial_number=certificate.serial_number,
-        not_before=certificate.not_before,
-        not_after=certificate.not_after,
-        is_expired=certificate.is_expired,
-        is_self_signed=certificate.is_self_signed,
-        public_key_algorithm=certificate.public_key_algorithm,
-        public_key_size_bits=certificate.public_key_size_bits,
-        signature_algorithm=certificate.signature_algorithm,
-        san_list=orjson.loads(certificate.san_list) if certificate.san_list else [],
-        weak_key=certificate.weak_key,
-        weak_signature=certificate.weak_signature,
-        session_id=certificate.session_id
-    )
+@app.get("/certificates/{certificate_id}", response_model=CertificateDetail)
+def get_certificate(certificate_id: str, db: Session = Depends(get_db)):
+    c = db.query(CertificateDB).filter(CertificateDB.certificate_id == certificate_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    d = CertificateDetail.model_validate({**{k: getattr(c, k) for k in CertificateDetail.model_fields
+                                            if k not in ("san_list", "seen_in_sessions")}})
+    d.san_list = json.loads(c.san_list) if c.san_list else []
+    d.seen_in_sessions = [s for (s,) in db.query(CertificateDB.session_id).filter(
+        CertificateDB.capture_id == c.capture_id, CertificateDB.fingerprint_sha256 == c.fingerprint_sha256)]
+    return d
 
 
+# --------------------------------------------------------------------- reports
 @app.get("/reports", response_model=List[ReportSummary])
-async def list_reports(
-    db: Session = Depends(get_db),
-    capture_id: Optional[str] = None
-):
-    """List all generated reports."""
-    query = db.query(ReportDB)
-
+def list_reports(db: Session = Depends(get_db), capture_id: Optional[str] = None):
+    q = db.query(ReportDB)
     if capture_id:
-        query = query.filter(ReportDB.capture_id == capture_id)
-
-    reports = query.order_by(ReportDB.created_at.desc()).all()
-
-    return reports
+        q = q.filter(ReportDB.capture_id == capture_id)
+    return q.order_by(ReportDB.created_at.desc()).limit(MAX_PAGE).all()
 
 
 @app.get("/reports/{report_id}", response_model=ReportSummary)
-async def get_report(
-    report_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get report metadata."""
-    report = db.query(ReportDB).filter(ReportDB.report_id == report_id).first()
-
-    if not report:
-        raise HTTPException(
-            status_code=404,
-            detail="Report not found"
-        )
-
-    return ReportSummary(
-        report_id=report.report_id,
-        capture_id=report.capture_id,
-        report_type=report.report_type,
-        file_size=report.file_size,
-        created_at=report.created_at
-    )
+def get_report(report_id: str, db: Session = Depends(get_db)):
+    r = db.query(ReportDB).filter(ReportDB.report_id == report_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return r
 
 
 @app.get("/reports/{report_id}/download")
-async def download_report(
-    report_id: str,
-    db: Session = Depends(get_db)
-):
-    """Download a generated report file."""
-    report = db.query(ReportDB).filter(ReportDB.report_id == report_id).first()
-
-    if not report:
-        raise HTTPException(
-            status_code=404,
-            detail="Report not found"
-        )
-
-    if not os.path.exists(report.file_path):
-        raise HTTPException(
-            status_code=404,
-            detail="Report file not found"
-        )
-
-    return FileResponse(
-        path=report.file_path,
-        filename=os.path.basename(report.file_path),
-        media_type="application/octet-stream"
-    )
-
-
-# Error handlers
-@app.exception_handler(404)
-async def not_found_handler(request, exc):
-    return JSONResponse(
-        status_code=404,
-        content=ErrorResponse(
-            error=ErrorDetail(
-                code="NOT_FOUND",
-                message="Resource not found"
-            )
-        ).dict()
-    )
-
-
-@app.exception_handler(422)
-async def validation_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=422,
-        content=ErrorResponse(
-            error=ErrorDetail(
-                code="VALIDATION_ERROR",
-                message="Request validation failed"
-            )
-        ).dict()
-    )
-
-
-@app.exception_handler(413)
-async def file_too_large_handler(request, exc):
-    return JSONResponse(
-        status_code=413,
-        content=ErrorResponse(
-            error=ErrorDetail(
-                code="FILE_TOO_LARGE",
-                message="File too large"
-            )
-        ).dict()
-    )
+def download_report(report_id: str, db: Session = Depends(get_db)):
+    r = db.query(ReportDB).filter(ReportDB.report_id == report_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Report not found")
+    path = service.report_path(r)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Report file not found")
+    c = db.query(CaptureDB).filter(CaptureDB.capture_id == r.capture_id).first()
+    from securemailscope.reports.render import safe_report_basename
+    name = f"{safe_report_basename(c.filename if c else 'capture')}_report.{r.report_type}"
+    # Always download (attachment), never render in the API origin.
+    media = {"json": "application/json", "html": "text/html", "pdf": "application/pdf"}.get(r.report_type,
+                                                                                          "application/octet-stream")
+    return FileResponse(path=str(path), filename=name, media_type=media,
+                        headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    settings = get_settings()
-
-    uvicorn.run(
-        "securemailscope.api.main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=True
-    )
+    s = get_settings()
+    uvicorn.run("securemailscope.api.main:app", host=s.host, port=s.port, reload=False)

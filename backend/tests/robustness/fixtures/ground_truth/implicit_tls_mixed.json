@@ -1,0 +1,45 @@
+{
+  "name": "implicit_tls_mixed",
+  "expected_protocol": "IMAP",
+  "expected_tls": true,
+  "expected_reconstruction_quality": "complete",
+  "expected_findings": [],
+  "expected_anomalies": [],
+  "expected_email_sessions": 3,
+  "expected_streams": 3,
+  "expected_sessions": [
+    {
+      "protocol": "IMAP",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.2",
+      "findings": [],
+      "certificates": 2,
+      "reconstruction_quality": "complete",
+      "implicit_tls": true,
+      "handshake_status": "complete"
+    },
+    {
+      "protocol": "POP3",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.3",
+      "findings": [],
+      "certificates": 0,
+      "reconstruction_quality": "complete",
+      "implicit_tls": true,
+      "handshake_status": "complete"
+    },
+    {
+      "protocol": "SMTP",
+      "starttls_state": "TLS_ESTABLISHED",
+      "tls_version": "TLSv1.2",
+      "findings": [],
+      "certificates": 2,
+      "reconstruction_quality": "complete",
+      "implicit_tls": true,
+      "handshake_status": "complete"
+    }
+  ],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "Implicit TLS on 993/995/465 must never be reported as plaintext."
+}

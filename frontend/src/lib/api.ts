@@ -1,104 +1,61 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import type {
+  AnalysisResponse, AnomalyDetail, AnomalySummary, CaptureDetail, CaptureSummary, CertificateDetail,
+  CertificateSummary, FindingDetail, FindingSummary, PostureResponse, ReportSummary, SessionDetail, SessionSummary,
+} from '../types/api';
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const BASE_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export const apiClient = axios.create({
-  baseURL: BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Accept': 'application/json',
-  },
-});
+export const apiClient = axios.create({ baseURL: BASE_URL, timeout: 60_000, headers: { Accept: 'application/json' } });
 
-// Upload PCAP
-export const uploadPcap = async (file: File) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const { data } = await apiClient.post('/analyze', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+const enc = encodeURIComponent;
+
+/** Human-readable message from an API error (never raw HTML / stack traces). */
+export const errorMessage = (err: unknown, fallback = 'Request failed'): string => {
+  const e = err as AxiosError<{ detail?: unknown }>;
+  const detail = e?.response?.data?.detail;
+  if (typeof detail === 'string') return detail.slice(0, 300);
+  if (e?.code === 'ERR_NETWORK') return 'Cannot reach the SecureMailScope API. Is the backend running?';
+  if (e?.code === 'ECONNABORTED') return 'The request timed out.';
+  return fallback;
+};
+
+export const uploadPcap = async (file: File, onProgress?: (pct: number) => void) => {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await apiClient.post<AnalysisResponse>('/analyze', form, {
+    timeout: 15 * 60_000,
+    onUploadProgress: (e) => onProgress?.(e.total ? Math.round((e.loaded / e.total) * 100) : 0),
   });
   return data;
 };
 
-// Capture endpoints
-export const getCaptures = async (status?: string) => {
-  const params = status ? { status } : {};
-  const { data } = await apiClient.get('/captures', { params });
-  return data;
-};
+export const getCaptures = async () => (await apiClient.get<CaptureSummary[]>('/captures')).data;
+export const getCapture = async (id: string) => (await apiClient.get<CaptureDetail>(`/captures/${enc(id)}`)).data;
+export const getPosture = async (id: string) =>
+  (await apiClient.get<PostureResponse>(`/captures/${enc(id)}/posture`)).data;
 
-export const getCapture = async (captureId: string) => {
-  const { data } = await apiClient.get(`/captures/${captureId}`);
-  return data;
-};
+export const getCaptureSessions = async (id: string) =>
+  (await apiClient.get<SessionSummary[]>(`/captures/${enc(id)}/sessions`)).data;
+export const getSession = async (id: string) => (await apiClient.get<SessionDetail>(`/sessions/${enc(id)}`)).data;
 
-// Session endpoints
-export const getCaptureSessions = async (captureId: string) => {
-  const { data } = await apiClient.get(`/captures/${captureId}/sessions`);
-  return data;
-};
+export const getCaptureFindings = async (id: string) =>
+  (await apiClient.get<FindingSummary[]>(`/captures/${enc(id)}/findings`)).data;
+export const getFinding = async (id: string) => (await apiClient.get<FindingDetail>(`/findings/${enc(id)}`)).data;
+export const setFindingStatus = async (id: string, status: string) =>
+  (await apiClient.patch<FindingDetail>(`/findings/${enc(id)}/status`, { status })).data;
 
-export const getSessions = async (filters?: { capture_id?: string; protocol?: string }) => {
-  const { data } = await apiClient.get('/sessions', { params: filters });
-  return data;
-};
+export const getCaptureCertificates = async (id: string) =>
+  (await apiClient.get<CertificateSummary[]>(`/captures/${enc(id)}/certificates`)).data;
+export const getCertificate = async (id: string) =>
+  (await apiClient.get<CertificateDetail>(`/certificates/${enc(id)}`)).data;
 
-export const getSession = async (sessionId: string) => {
-  const { data } = await apiClient.get(`/sessions/${sessionId}`);
-  return data;
-};
+export const getCaptureAnomalies = async (id: string) =>
+  (await apiClient.get<AnomalySummary[]>(`/captures/${enc(id)}/anomalies`)).data;
+export const getAnomaly = async (id: number) => (await apiClient.get<AnomalyDetail>(`/anomalies/${id}`)).data;
 
-// Finding endpoints
-export const getFindings = async (filters?: { capture_id?: string; severity?: string }) => {
-  const { data } = await apiClient.get('/findings', { params: filters });
-  return data;
-};
+export const createReport = async (captureId: string, format: 'json' | 'html' | 'pdf') =>
+  (await apiClient.post<ReportSummary>(`/captures/${enc(captureId)}/reports`, null, { params: { format } })).data;
 
-export const getFinding = async (findingId: string) => {
-  const { data } = await apiClient.get(`/findings/${findingId}`);
-  return data;
-};
-
-// Anomaly endpoints
-export const getAnomalies = async (filters?: { capture_id?: string; is_anomaly?: boolean }) => {
-  const { data } = await apiClient.get('/anomalies', { params: filters });
-  return data;
-};
-
-export const getAnomaly = async (anomalyId: number) => {
-  const { data } = await apiClient.get(`/anomalies/${anomalyId}`);
-  return data;
-};
-
-// Certificate endpoints
-export const getCertificates = async (filters?: { capture_id?: string; session_id?: string }) => {
-  const { data } = await apiClient.get('/certificates', { params: filters });
-  return data;
-};
-
-export const getCertificate = async (fingerprint: string) => {
-  const { data } = await apiClient.get(`/certificates/${fingerprint}`);
-  return data;
-};
-
-// Posture endpoint
-export const getPosture = async (captureId: string) => {
-  const { data } = await apiClient.get(`/captures/${captureId}/posture`);
-  return data;
-};
-
-// Report endpoints
-export const getReports = async (captureId?: string) => {
-  const params = captureId ? { capture_id: captureId } : {};
-  const { data } = await apiClient.get('/reports', { params });
-  return data;
-};
-
-export const getReport = async (reportId: string) => {
-  const { data } = await apiClient.get(`/reports/${reportId}`);
-  return data;
-};
-
-export const downloadReport = (reportId: string) => {
-  window.open(`${BASE_URL}/reports/${reportId}/download`, '_blank');
-};
+/** Report files are served as attachments; the browser downloads rather than renders them. */
+export const reportDownloadUrl = (reportId: string) => `${BASE_URL}/reports/${enc(reportId)}/download`;

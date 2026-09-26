@@ -16,11 +16,12 @@ if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $scriptPath "backend")
 
-Write-Host "Starting FastAPI server on http://localhost:8000..." -ForegroundColor Green
+Write-Host "Starting FastAPI server on http://127.0.0.1:8000..." -ForegroundColor Green
 Write-Host "API docs available at http://localhost:8000/docs" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Gray
 Write-Host ""
 
 # Start uvicorn
-python -m uvicorn securemailscope.api.main:app --host 0.0.0.0 --port 8000 --reload
+# Loopback only: the API has no authentication and must not be exposed to the network.
+python -m uvicorn securemailscope.api.main:app --host 127.0.0.1 --port 8000

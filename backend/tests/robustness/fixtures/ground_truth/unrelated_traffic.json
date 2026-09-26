@@ -1,0 +1,15 @@
+{
+  "name": "unrelated_traffic",
+  "expected_protocol": null,
+  "expected_tls": false,
+  "expected_reconstruction_quality": null,
+  "expected_findings": [],
+  "expected_anomalies": [],
+  "expected_email_sessions": 0,
+  "expected_streams": 3,
+  "expected_sessions": [],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "No email: posture must be UNKNOWN, not Excellent.",
+  "expected_posture_status": "Unknown"
+}

@@ -1,152 +1,95 @@
-import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, Receipt } from 'lucide-react';
 import { useCapture } from '../context/CaptureContext';
-import { getCertificates, getCertificate } from '../lib/api';
-import type { CertificateSummary, CertificateDetail as CertificateDetailType } from '../types/api';
-import { Receipt, ArrowRight, X } from 'lucide-react';
+import { getCaptureCertificates, getCertificate } from '../lib/api';
+import { useAsync } from '../hooks/useAsync';
+import { useDetailPanel } from '../hooks/useDetailPanel';
+import { DetailPanel, Field, StateBlock } from '../components/StateBlock';
+import type { CertificateSummary } from '../types/api';
+
+const validity = (c: CertificateSummary) =>
+  c.is_expired ? ['Expired at capture', 'bg-red-950 text-red-300 border-red-800']
+    : c.is_not_yet_valid ? ['Not yet valid', 'bg-red-950 text-red-300 border-red-800']
+    : ['In validity period', 'bg-emerald-950 text-emerald-300 border-emerald-800'];
 
 export const CertificatesPage = () => {
   const { activeCaptureId } = useCapture();
-  const [certificates, setCertificates] = useState<CertificateSummary[]>([]);
-  const [selectedCert, setSelectedCert] = useState<CertificateDetailType | null>(null);
-
-  useEffect(() => {
-    let ignore = false;
-    if (!activeCaptureId) {
-      return;
-    }
-
-    const loadCerts = async () => {
-      try {
-        const data = await getCertificates({ capture_id: activeCaptureId });
-        if (!ignore) {
-          setCertificates(data);
-          setSelectedCert(null);
-        }
-      } catch (err) {
-        if (!ignore) {
-          console.error('Failed to load certificates', err);
-        }
-      }
-    };
-
-    loadCerts();
-
-    return () => {
-      ignore = true;
-    };
-  }, [activeCaptureId]);
-
-  const handleSelectCert = async (fp: string) => {
-    try {
-      const detail = await getCertificate(fp);
-      setSelectedCert(detail);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Derive empty-state values during render instead of setting state in effect.
-  const currentCertificates = activeCaptureId ? certificates : [];
-  const currentSelectedCert = activeCaptureId ? selectedCert : null;
+  const { selectedId, open, close } = useDetailPanel();
+  const list = useAsync(() => getCaptureCertificates(activeCaptureId!), activeCaptureId);
+  const detail = useAsync(() => getCertificate(selectedId!), selectedId);
+  if (!activeCaptureId) return <StateBlock empty emptyText="Select a capture to view certificates." />;
+  const d = detail.data;
 
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Certificate Inventory</h2>
-        <p className="text-sm text-slate-400 mt-1">X.509 certificates extracted passively from observed TLS Server Certificate handshakes.</p>
+        <p className="text-sm text-slate-400 mt-1">
+          X.509 certificates visible in cleartext TLS Certificate messages (TLS ≤ 1.2). TLS 1.3 encrypts certificates, so they cannot be observed passively.
+          Trust is not evaluated: no trust-anchor store is consulted.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Certificate List */}
-        <div className={`space-y-3 ${currentSelectedCert ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
-          {currentCertificates.length === 0 ? (
-            <div className="text-center py-12 bg-slate-900/20 border border-slate-800 rounded-lg text-slate-500">
-              No certificates observed in capture.
-            </div>
-          ) : (
-            currentCertificates.map((c) => (
-              <div
-                key={c.fingerprint_sha256}
-                onClick={() => handleSelectCert(c.fingerprint_sha256)}
-                className={`p-4 rounded-lg border transition-all cursor-pointer flex items-center justify-between ${
-                  currentSelectedCert?.fingerprint_sha256 === c.fingerprint_sha256
-                    ? 'bg-slate-800/80 border-amber-500/50'
-                    : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'
-                }`}
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Receipt size={16} className="text-amber-400" />
-                    <span className="text-sm font-semibold text-slate-200">{c.subject}</span>
+        <div className={`space-y-3 ${selectedId ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+          <StateBlock loading={list.loading} error={list.error} onRetry={list.reload}
+            empty={!!list.data && list.data.length === 0} emptyText="No certificates observed in this capture.">
+            {list.data?.map((c) => {
+              const [label, cls] = validity(c);
+              return (
+                <button key={c.certificate_id} type="button" onClick={() => open(c.certificate_id)} aria-pressed={selectedId === c.certificate_id}
+                  aria-label={`Open details for certificate ${c.subject ?? c.fingerprint_sha256}`}
+                  className={`w-full text-left p-4 rounded-lg border transition-all flex items-center justify-between gap-4 ${selectedId === c.certificate_id
+                    ? 'bg-slate-800/80 border-amber-500/50' : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'}`}>
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Receipt size={16} className="text-amber-400 shrink-0" />
+                      <span className="text-sm font-semibold text-slate-200 break-all">{c.common_name ?? c.subject}</span>
+                      <span className="text-[10px] text-slate-400">{c.chain_position === 0 ? 'leaf' : `chain #${c.chain_position}`}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono break-all">Issuer: {c.issuer}</div>
+                    <div className="text-[11px] text-slate-500 font-mono">{c.public_key_algorithm} {c.public_key_size_bits ? `${c.public_key_size_bits}-bit` : ''}{c.is_self_signed ? ' · self-signed' : ''}</div>
                   </div>
-                  <div className="text-xs text-slate-400 font-mono">
-                    Issuer: {c.issuer}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className={`border text-[10px] px-2 py-0.5 rounded font-bold uppercase ${cls}`}>{label}</span>
+                    <ArrowRight size={16} className="text-slate-500" aria-hidden="true" />
                   </div>
-                  <div className="text-[11px] text-slate-500 font-mono">
-                    {c.public_key_algorithm} {c.public_key_size_bits ? `(${c.public_key_size_bits} bit)` : ''}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {c.is_expired ? (
-                    <span className="bg-red-950 text-red-400 border border-red-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
-                      Expired
-                    </span>
-                  ) : (
-                    <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">
-                      Valid
-                    </span>
-                  )}
-                  <ArrowRight size={16} className="text-slate-600" />
-                </div>
-              </div>
-            ))
-          )}
+                </button>
+              );
+            })}
+          </StateBlock>
         </div>
 
-        {/* Certificate Details */}
-        {currentSelectedCert && (
-          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6 h-fit sticky top-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <span className="text-[10px] font-mono text-slate-500 uppercase block truncate max-w-[240px]">
-                  FP: {currentSelectedCert.fingerprint_sha256}
-                </span>
-                <h3 className="text-lg font-bold text-slate-100 mt-1">X.509 Certificate</h3>
-              </div>
-              <button
-                onClick={() => setSelectedCert(null)}
-                className="text-slate-500 hover:text-slate-300 p-1"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-3 font-mono text-xs divide-y divide-slate-800/60">
-              <div className="pt-2">
-                <span className="text-slate-500 block mb-1">Subject:</span>
-                <span className="text-slate-200 font-semibold">{currentSelectedCert.subject}</span>
-              </div>
-              <div className="pt-2">
-                <span className="text-slate-500 block mb-1">Issuer:</span>
-                <span className="text-slate-200">{currentSelectedCert.issuer}</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Public Key:</span>
-                <span className="text-slate-200">{currentSelectedCert.public_key_algorithm} ({currentSelectedCert.public_key_size_bits} bit)</span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Weak Key:</span>
-                <span className={currentSelectedCert.weak_key ? 'text-red-400' : 'text-emerald-400'}>
-                  {currentSelectedCert.weak_key ? 'YES' : 'NO'}
-                </span>
-              </div>
-              <div className="pt-2 flex justify-between">
-                <span className="text-slate-500">Signature:</span>
-                <span className="text-slate-200">{currentSelectedCert.signature_algorithm || 'Unknown'}</span>
-              </div>
-            </div>
-          </div>
+        {selectedId && (
+          <DetailPanel title="X.509 certificate" subtitle={d ? `SHA-256 ${d.fingerprint_sha256}` : selectedId} onClose={close}>
+            <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload}>
+              {d && (
+                <div>
+                  <Field label="Subject">{d.subject}</Field>
+                  <Field label="Issuer">{d.issuer}</Field>
+                  <Field label="Serial">{d.serial_number}</Field>
+                  <Field label="Valid from">{d.not_before}</Field>
+                  <Field label="Valid until">{d.not_after}</Field>
+                  <Field label="Validity evaluated at">{d.validity_reference === 'capture_time' ? 'capture time' : d.validity_reference}</Field>
+                  <Field label="Status">{validity(d)[0]}</Field>
+                  <Field label="Public key">{d.public_key_algorithm} {d.public_key_size_bits}-bit{d.weak_key ? ' (weak)' : ''}</Field>
+                  <Field label="Signature">{d.signature_algorithm}{d.weak_signature ? ' (weak hash)' : ''}</Field>
+                  <Field label="CA certificate">{d.is_ca === null ? 'not stated' : d.is_ca ? 'yes' : 'no'}</Field>
+                  <Field label="Self-signed">{d.is_self_signed ? 'yes (signature verified with own key)' : 'no'}</Field>
+                  <Field label="Signed by next in chain">{d.issued_by_next ?? 'n/a'}</Field>
+                  <Field label="Trust">{d.trust_status} — not evaluated (no trust anchors)</Field>
+                  <Field label="SAN">{d.san_list.length ? d.san_list.join(', ') : 'none'}</Field>
+                  <Field label="Seen in sessions">
+                    <span className="flex flex-col items-end gap-1">
+                      {d.seen_in_sessions.map((s) => (
+                        <Link key={s} to={`/sessions?id=${encodeURIComponent(s)}`} className="text-amber-300 hover:underline">{s.split('~').pop()}</Link>
+                      ))}
+                    </span>
+                  </Field>
+                </div>
+              )}
+            </StateBlock>
+          </DetailPanel>
         )}
       </div>
     </div>

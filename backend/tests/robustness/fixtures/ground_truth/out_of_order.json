@@ -6,5 +6,24 @@
   "expected_findings": [
     "PROTO-001"
   ],
-  "expected_anomalies": []
+  "expected_anomalies": [],
+  "expected_email_sessions": 1,
+  "expected_streams": 1,
+  "expected_sessions": [
+    {
+      "protocol": "SMTP",
+      "starttls_state": "PLAINTEXT",
+      "tls_version": null,
+      "findings": [
+        "PROTO-001"
+      ],
+      "certificates": 0,
+      "reconstruction_quality": "complete",
+      "implicit_tls": false,
+      "handshake_status": null
+    }
+  ],
+  "tls_source": "OpenSSL OpenSSL 3.0.13 30 Jan 2024 via memory BIO",
+  "certificate_validity_reference": "capture_time",
+  "notes": "Banner segments arrive in reverse order; reassembly must restore them."
 }

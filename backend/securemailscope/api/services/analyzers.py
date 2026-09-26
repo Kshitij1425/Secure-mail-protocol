@@ -1,206 +1,289 @@
 """
-Analysis service layer for SecureMailScope.
-Coordinates the actual analysis pipeline without duplicating logic.
+Analysis service: upload intake, pipeline execution, persistence and reports.
+
+Security properties:
+* uploads are streamed to disk under a hard size cap and validated by magic bytes;
+* the stored file name is server generated (``<capture_id>.<format>``); the client
+  file name is kept only as a sanitised display string;
+* persistence of one analysis is a single transaction (all-or-nothing);
+* error messages returned to clients never contain paths or exception text.
 """
 import hashlib
-import tempfile
-import uuid
+import json
 import logging
-from datetime import datetime
+import os
+import re
+import tempfile
+import threading
+import time
+import unicodedata
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Any, BinaryIO, Dict, Optional, Tuple
 
-import orjson
-from fastapi import UploadFile, HTTPException
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from securemailscope.api.database import (
-    get_session_local,
-    CaptureDB,
-    SessionDB,
-    FindingDB,
-    CertificateDB,
-    AnomalyDB,
-    ReportDB,
-    SessionFindingDB
-)
-from securemailscope.core.orchestrator import Orchestrator
+from securemailscope import __version__
 from securemailscope.api.config import get_settings
+from securemailscope.api.database import (AnomalyDB, CaptureDB, CertificateDB, FindingDB, ReportDB, SessionDB,
+                                          SessionFindingDB, get_utc_now)
+from securemailscope.core.orchestrator import Orchestrator, OrchestratorResult
+from securemailscope.ingestion.reader import AnalysisLimitExceeded, detect_capture_format
+from securemailscope.reports.document import document_from_result
+from securemailscope.reports.render import RENDERERS, ReportUnavailable
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("securemailscope.api.service")
+_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class ServiceError(Exception):
+    """Client-safe error with an HTTP status."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def sanitize_display_name(name: Optional[str]) -> str:
+    """Display-only name: last path component, NFC, no control chars, bounded."""
+    raw = (name or "capture").replace("\\", "/").split("/")[-1]
+    raw = unicodedata.normalize("NFC", raw)
+    raw = _CTRL.sub("", raw).strip().strip(".") or "capture"
+    stem, ext = os.path.splitext(raw)
+    ext = ext[:10]
+    return stem[:200 - len(ext)] + ext
+
+
+def _dt(ts) -> Optional[datetime]:
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(ts), timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _j(v) -> str:
+    return json.dumps(v, default=str, separators=(",", ":"))
 
 
 class AnalysisService:
-    """Service for coordinating analysis pipelines."""
+    """Coordinates intake, analysis, persistence and reporting."""
 
     def __init__(self):
-        self.settings = get_settings()
-        self.orchestrator = Orchestrator()
+        self._slots = threading.BoundedSemaphore(get_settings().max_concurrent_analyses)
 
-    def save_capture(self, file: UploadFile, db: Session) -> Tuple[CaptureDB, Path]:
-        """Save uploaded capture file and create database record."""
-        # Generate unique IDs and file paths
+    # ------------------------------------------------------------- intake
+    def receive_upload(self, stream: BinaryIO, filename: Optional[str]) -> Tuple[Path, str, int, str, str]:
+        """Stream an upload to a temp file. Returns (path, sha256, size, format, display_name)."""
+        settings = get_settings()
+        display = sanitize_display_name(filename)
+        ext = os.path.splitext(display)[1].lower()
+        if ext not in {e.lower() for e in settings.allowed_extensions}:
+            raise ServiceError(422, f"Unsupported file type. Allowed: {', '.join(sorted(settings.allowed_extensions))}")
+        upload_dir = Path(settings.upload_dir)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix="incoming-", suffix=".part", dir=upload_dir)
+        tmp = Path(tmp_name)
+        h, size, limit = hashlib.sha256(), 0, settings.max_upload_size_bytes
+        try:
+            with os.fdopen(fd, "wb") as out:
+                while chunk := stream.read(1 << 20):
+                    size += len(chunk)
+                    if size > limit:
+                        raise ServiceError(413, f"File too large. Maximum size is {settings.max_upload_size_mb} MB")
+                    h.update(chunk)
+                    out.write(chunk)
+            if size == 0:
+                raise ServiceError(400, "Uploaded file is empty")
+            fmt = detect_capture_format(str(tmp))
+            if fmt is None:
+                raise ServiceError(422, "File is not a PCAP or PCAPNG capture")
+            return tmp, h.hexdigest(), size, fmt, display
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    def create_capture(self, tmp: Path, sha: str, size: int, fmt: str, display: str, db: Session) -> CaptureDB:
         capture_id = str(uuid.uuid4())
-        file_hash = hashlib.sha256()
-
-        # Create upload directory if not exists
-        upload_dir = Path(self.settings.upload_dir)
-        upload_dir.mkdir(exist_ok=True)
-
-        # Generate safe filename
-        original_filename = Path(file.filename)
-        safe_filename = f"{capture_id}_{original_filename.name}"
-        file_path = upload_dir / safe_filename
-
-        # Read file in chunks and hash
-        with open(file_path, "wb") as buffer:
-            while chunk := file.file.read(8192):
-                file_hash.update(chunk)
-                buffer.write(chunk)
-
-        file_hash_hex = file_hash.hexdigest()
-        file_size = file_path.stat().st_size
-
-        # Validate file extension
-        allowed_extensions = {ext.lower() for ext in self.settings.allowed_extensions}
-        if original_filename.suffix.lower() not in allowed_extensions:
-            raise HTTPException(
-                status_code=422,
-                detail=f"File type {original_filename.suffix} not allowed. "
-                       f"Allowed types: {', '.join(self.settings.allowed_extensions)}"
-            )
-
-        # Create database record
-        capture = CaptureDB(
-            capture_id=capture_id,
-            filename=original_filename.name,
-            file_hash=file_hash_hex,
-            file_path=str(file_path),
-            file_size=file_size,
-            analysis_status="pending"
-        )
-
+        stored = f"{capture_id}.{fmt}"
+        final = Path(get_settings().upload_dir) / stored
+        os.replace(tmp, final)
+        capture = CaptureDB(capture_id=capture_id, filename=display, stored_filename=stored, file_hash=sha,
+                            file_path=str(final), file_size=size, file_format=fmt, analysis_status="pending")
         db.add(capture)
         db.commit()
         db.refresh(capture)
+        logger.info(f"Capture {capture_id} stored ({size} bytes, sha256 {sha[:12]})")
+        return capture
 
-        logger.info(f"Saved capture {capture_id}: {original_filename.name} ({file_size} bytes)")
-
-        return capture, file_path
-
-    def run_analysis(self, capture: CaptureDB, file_path: Path, db: Session) -> CaptureDB:
-        """Run the actual M1-M11 analysis pipeline."""
+    # ----------------------------------------------------------- analysis
+    def run_analysis(self, capture: CaptureDB, db: Session) -> CaptureDB:
+        settings = get_settings()
+        if not self._slots.acquire(blocking=False):
+            capture.analysis_status = "failed"
+            capture.analysis_error = "Server busy: too many concurrent analyses"
+            db.commit()
+            raise ServiceError(503, "Server busy: too many concurrent analyses; retry shortly")
+        started = time.perf_counter()
         try:
-            # Update status to processing
             capture.analysis_status = "processing"
             db.commit()
-
-            logger.info(f"Starting analysis for capture {capture.capture_id}")
-
-            # Run the orchestrator (M1-M11 pipeline)
-            posture_score, metadata = self.orchestrator.analyze(str(file_path))
-
-            # Extract results from metadata and posture score
-            self._process_analysis_results(capture, metadata, posture_score, db)
-
-            # Update capture status
-            capture.analysis_status = "completed"
-            capture.analysis_timestamp = datetime.utcnow()
-
-            db.commit()
-            db.refresh(capture)
-
-            logger.info(f"Analysis completed for capture {capture.capture_id}")
-
+            orchestrator = Orchestrator(securemailscope_version=__version__, max_packets=settings.max_packets,
+                                        time_budget_seconds=settings.analysis_time_budget_seconds)
+            result = orchestrator.analyze(capture.file_path, session_prefix=f"{capture.capture_id}~")
+            self._persist(capture, result, db, time.perf_counter() - started)
             return capture
-
-        except Exception as e:
-            logger.error(f"Analysis failed for capture {capture.capture_id}: {e}")
-
-            # Update status to failed
-            capture.analysis_status = "failed"
-            capture.analysis_timestamp = datetime.utcnow()
-
-            db.commit()
-            db.refresh(capture)
-
+        except (ValueError, AnalysisLimitExceeded) as e:
+            db.rollback()
+            msg = str(e) if isinstance(e, AnalysisLimitExceeded) else "Invalid or unreadable capture"
+            self._mark_failed(capture, db, msg)
+            raise ServiceError(422 if isinstance(e, ValueError) else 413, msg)
+        except ServiceError:
             raise
+        except Exception:
+            db.rollback()
+            logger.exception(f"Analysis failed for capture {capture.capture_id}")
+            self._mark_failed(capture, db, "Internal analysis error")
+            raise ServiceError(500, "Analysis failed due to an internal error")
+        finally:
+            self._slots.release()
 
-    def _process_analysis_results(self, capture: CaptureDB, metadata: Dict[str, Any],
-                                  posture_score, db: Session):
-        """Process and store analysis results in database."""
-        # Process sessions from metadata
-        if "reconstructed_streams" in metadata:
-            capture.stream_count = metadata.get("reconstructed_streams", 0)
+    @staticmethod
+    def _mark_failed(capture: CaptureDB, db: Session, message: str) -> None:
+        capture.analysis_status = "failed"
+        capture.analysis_error = message[:255]
+        capture.analysis_timestamp = get_utc_now()
+        db.commit()
 
-        capture.packet_count = metadata.get("packet_count", 0)
-        capture.email_session_count = metadata.get("email_session_count", 0)
-        capture.tls_session_count = metadata.get("tls_session_count", 0)
+    def _persist(self, capture: CaptureDB, result: OrchestratorResult, db: Session, duration: float) -> None:
+        """Write every artefact of one analysis in a single transaction."""
+        cid = capture.capture_id
+        doc = document_from_result(result, capture_id=cid, filename=capture.filename)
+        meta = result.metadata
+        posture = result.posture
 
-        # Process findings from posture score
-        self._store_findings(capture, posture_score, db)
+        sess_docs = {s["session_id"]: s for s in doc["sessions"]}
 
-        # Process certificates from posture score
-        self._store_certificates(capture, posture_score, db)
+        def bulk(model, rows):
+            # Core executemany in chunks: bounded memory, same transaction as the capture update.
+            for i in range(0, len(rows), 2000):
+                db.execute(insert(model), rows[i:i + 2000])
 
-        # Process anomalies from posture score
-        self._store_anomalies(capture, posture_score, db)
+        def session_rows():
+            for s in result.sessions:
+                t, stream, a = s.tls_data, s.stream, s.anomaly
+                yield dict(
+                    capture_id=cid, session_id=s.session_id, stream_id=stream.stream_id, protocol=s.protocol.name,
+                    source_ip=stream.client_ip, source_port=stream.src_port, dest_ip=stream.server_ip,
+                    dest_port=stream.dst_port, start_timestamp=_dt(stream.start_time),
+                    end_timestamp=_dt(stream.end_time), first_frame=stream.first_frame, last_frame=stream.last_frame,
+                    packet_count=stream.packets_analyzed, byte_count=stream.payload_bytes,
+                    detection_method=s.detection.detection_method if s.detection else None,
+                    implicit_tls=s.implicit_tls, starttls_state=s.starttls_state.name,
+                    starttls_advertised=s.starttls.starttls_advertised if s.starttls else None,
+                    tls_version=t.server_version if t else None, client_hello_version=t.client_version if t else None,
+                    cipher_suite=t.cipher_suite_name if t else None, key_exchange=t.key_exchange if t else None,
+                    key_exchange_group=t.key_exchange_group if t else None, sni=t.sni if t else None,
+                    has_forward_secrecy=(t.has_forward_secrecy if t and t.server_version else None),
+                    handshake_complete=bool(t and t.handshake_complete),
+                    handshake_status=t.handshake_status if t else None,
+                    certificate_visibility=t.certificate_visibility if t else None,
+                    reconstruction_quality=stream.reconstruction_quality, has_findings=bool(s.findings),
+                    has_anomaly=bool(a and a.is_anomaly), anomaly_score=a.anomaly_score if a else None,
+                    anomaly_level=a.anomaly_level.value if a else None, detail_json=_j(sess_docs[s.session_id]),
+                )
 
-        # Store posture score information
-        capture.posture_score = posture_score.overall_score
-        capture.posture_status = posture_score.status.value if hasattr(posture_score.status, 'value') else str(posture_score.status)
-        capture.scoring_policy_version = posture_score.scoring_policy_version
+        bulk(SessionDB, list(session_rows()))
 
-        # ML engine version from posture score if available
-        if hasattr(posture_score, 'ml_engine_version'):
-            capture.ml_engine_version = posture_score.ml_engine_version
+        bulk(FindingDB, [dict(
+            capture_id=cid, finding_id=f["finding_id"], session_id=f["session_id"], rule_id=f["rule_id"],
+            title=f["title"][:255], severity=f["severity"], category=f["category"], dimension=f["dimension"],
+            evidence_type=f["evidence_type"], confidence=f["confidence"], risk_contribution=f["risk_contribution"],
+            priority=i, explanation=f["description"], recommendation=f["recommendation"], references=f["references"],
+            evidence=_j(f["evidence"]), evidence_frames=_j(f["evidence_frames"]), status="open",
+            timestamp=get_utc_now()) for i, f in enumerate(doc["findings"], 1)])
+        bulk(SessionFindingDB, [dict(capture_id=cid, session_id=f["session_id"], finding_id=f["finding_id"])
+                                for f in doc["findings"] if f["session_id"]])
 
-    def _store_findings(self, capture: CaptureDB, posture_score, db: Session):
-        """Store findings from posture score in database."""
-        # Extract findings from posture score top contributors
-        for contributor in posture_score.top_contributors:
-            finding = FindingDB(
-                capture_id=capture.capture_id,
-                finding_id=f"{contributor.root_issue}_{capture.capture_id}",
-                session_id=None,  # Could be extracted from posture score
-                rule_id=contributor.root_issue,
-                title=contributor.root_issue.replace("_", " ").title(),
-                severity=contributor.severity,
-                category=self._map_category(contributor.root_issue),
-                confidence=0.95,  # Default confidence
-                risk_contribution=contributor.impact_points,
-                explanation=contributor.explanation,
-                recommendation=f"Apply remediation for {contributor.root_issue}",
-                evidence=f"Detected in {contributor.affected_sessions} sessions"
-            )
+        bulk(CertificateDB, [dict(
+            capture_id=cid, certificate_id=c["certificate_id"], session_id=c["session_id"],
+            chain_position=c["chain_position"], fingerprint_sha256=c["fingerprint_sha256"], subject=c["subject"],
+            issuer=c["issuer"], common_name=c["common_name"], serial_number=c["serial_number"],
+            not_before=datetime.fromisoformat(c["not_before"]) if c["not_before"] else None,
+            not_after=datetime.fromisoformat(c["not_after"]) if c["not_after"] else None,
+            validity_reference=c["validity_reference"], is_expired=c["is_expired"],
+            is_not_yet_valid=c["is_not_yet_valid"], is_self_signed=c["is_self_signed"], is_ca=c["is_ca"],
+            public_key_algorithm=c["public_key_algorithm"], public_key_size_bits=c["public_key_size_bits"],
+            signature_algorithm=c["signature_algorithm"], san_list=_j(c["san_list"]), weak_key=c["weak_key"],
+            weak_signature=c["weak_signature"], issued_by_next=c["issued_by_next"], trust_status=c["trust_status"],
+        ) for c in doc["certificates"]])
 
-            db.add(finding)
-            db.flush()
+        model_version = (meta.get("ml_engine_summary") or {}).get("model_version")
+        bulk(AnomalyDB, [dict(capture_id=cid, session_id=a["session_id"], is_anomaly=a["is_anomaly"],
+                              anomaly_score=a["anomaly_score"], anomaly_level=a["anomaly_level"],
+                              explanation=a["explanation"], features_json=_j(a["features"]),
+                              model_version=model_version, timestamp=get_utc_now()) for a in doc["anomalies"]])
 
-            # Create session-finding relationship if session_id available
-            # This would require session extraction from posture score
+        capture.packet_count = result.packet_count
+        capture.stream_count = result.reconstructed_stream_count
+        capture.email_session_count = result.email_session_count
+        capture.tls_session_count = result.tls_session_count
+        capture.capture_start = _dt(meta.get("start_time"))
+        capture.capture_end = _dt(meta.get("end_time"))
+        capture.posture_score = posture.overall_score
+        capture.posture_status = posture.status.value
+        capture.scoring_policy_version = posture.scoring_policy_version
+        capture.rule_policy_version = meta.get("rule_policy_version")
+        capture.ml_engine_version = model_version
+        capture.ml_status = (meta.get("ml_engine_summary") or {}).get("status")
+        capture.ml_anomalies_detected = meta.get("ml_anomalies_detected", 0)
+        capture.posture_json = _j(doc["posture"])
+        capture.metadata_json = _j({k: v for k, v in meta.items() if k not in ("filepath",)})
+        capture.document_json = _j(doc)
+        capture.analysis_status = "completed"
+        capture.analysis_error = None
+        capture.analysis_timestamp = get_utc_now()
+        capture.analysis_duration_seconds = round(duration, 4)
+        db.commit()
+        db.refresh(capture)
+        logger.info(f"Analysis completed for capture {cid}: {result.email_session_count} email sessions, "
+                    f"{len(result.findings)} findings")
 
-    def _store_certificates(self, capture: CaptureDB, posture_score, db: Session):
-        """Store certificate information."""
-        # Extract certificates from posture score or engine
-        # This would require certificate extraction from the analysis pipeline
-        pass
+    # ------------------------------------------------------------ reports
+    def generate_report(self, capture: CaptureDB, fmt: str, db: Session) -> ReportDB:
+        if fmt not in RENDERERS:
+            raise ServiceError(422, "Unsupported report format (json, html, pdf)")
+        if capture.analysis_status != "completed" or not capture.document_json:
+            raise ServiceError(409, "Analysis is not complete for this capture")
+        render, _ = RENDERERS[fmt]
+        doc = json.loads(capture.document_json)
+        try:
+            data = render(doc)
+        except ReportUnavailable as e:
+            raise ServiceError(501, str(e))
+        report_id = str(uuid.uuid4())
+        out_dir = Path(get_settings().reports_dir) / capture.capture_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{report_id}.{fmt}"
+        path.write_bytes(data)
+        row = ReportDB(capture_id=capture.capture_id, report_id=report_id, report_type=fmt, file_path=str(path),
+                       file_size=len(data), sha256=hashlib.sha256(data).hexdigest())
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
 
-    def _store_anomalies(self, capture: CaptureDB, posture_score, db: Session):
-        """Store anomaly detection results."""
-        # Extract anomalies from posture score or engine
-        # This would require anomaly extraction from the analysis pipeline
-        pass
-
-    def _map_category(self, rule_id: str) -> str:
-        """Map rule ID to category."""
-        category_map = {
-            "STARTTLS_REJECTED": "encryption",
-            "WEAK_CIPHER": "encryption",
-            "NO_FORWARD_SECRECY": "forward_secrecy",
-            "EXPIRED_CERT": "certificates",
-            "WEAK_RSA_KEY": "certificates",
-            "SELF_SIGNED_CERT": "certificates",
-        }
-
-        return category_map.get(rule_id, "other")
+    @staticmethod
+    def report_path(row: ReportDB) -> Optional[Path]:
+        """Resolve a report path and refuse anything outside the reports directory."""
+        base = Path(get_settings().reports_dir).resolve()
+        p = Path(row.file_path).resolve()
+        try:
+            p.relative_to(base)
+        except ValueError:
+            return None
+        return p if p.is_file() else None
