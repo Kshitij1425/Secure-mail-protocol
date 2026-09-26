@@ -1,0 +1,26 @@
+# Raw packet-capture mail lab: Postfix (SMTP/submission/SMTPS) + Dovecot (IMAP/IMAPS/POP3/POP3S)
+# + tcpdump sharing the mail server's network namespace. Isolated bridge network, no published ports.
+# NOTE: written for Docker hosts; NOT executed in the environment that produced this repository
+# (no Docker available there). See lab/README.md.
+services:
+  mail:
+    build: ./mail
+    hostname: mail.lab.test
+    networks: [lab]
+  capture:
+    image: nicolaka/netshoot:v0.13
+    network_mode: "service:mail"
+    command: ["tcpdump", "-i", "any", "-s", "0", "-U", "-w", "/captures/lab.pcapng",
+              "tcp port 25 or tcp port 465 or tcp port 587 or tcp port 110 or tcp port 143 or tcp port 993 or tcp port 995"]
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes: ["./captures:/captures"]
+    depends_on: [mail]
+  client:
+    image: python:3.12-slim
+    networks: [lab]
+    volumes: ["./client:/client:ro"]
+    command: ["python", "/client/run_scenarios.py", "mail.lab.test"]
+    depends_on: [capture]
+networks:
+  lab:
+    internal: true

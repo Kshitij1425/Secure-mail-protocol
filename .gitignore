@@ -30,3 +30,7 @@ frontend/dist/
 # Tooling
 .playwright-mcp/
 .DS_Store
+
+# Mail lab binaries (downloaded; see lab/README.md)
+/lab/tools/
+__pycache__/

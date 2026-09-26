@@ -132,11 +132,25 @@ def test_detector_implicit_tls_ports():
 
 
 def test_detector_bounded_on_hostile_banner():
+    """Cost must not grow with banner size (bounded inspection window, no backtracking).
+
+    Compared as a ratio against a small banner, best of several runs, so the test is
+    not sensitive to machine load (an absolute wall-clock bound was flaky under CI load).
+    """
     import time
-    evil = b"220 " + b"a" * 200_000 + b"\r\n"
-    t = time.perf_counter()
-    ProtocolDetector().detect(evil, port=25)
-    assert time.perf_counter() - t < 0.5
+
+    def best(payload):
+        d = ProtocolDetector()
+        runs = []
+        for _ in range(5):
+            t = time.perf_counter()
+            d.detect(payload, port=25)
+            runs.append(time.perf_counter() - t)
+        return min(runs)
+
+    small = best(b"220 " + b"a" * 2_000 + b"\r\n")
+    huge = best(b"220 " + b"a" * 2_000_000 + b"\r\n")
+    assert huge < max(small * 20, 0.05)
 
 
 # ------------------------------------------------------------------ STARTTLS
