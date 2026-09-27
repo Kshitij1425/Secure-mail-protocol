@@ -21,7 +21,7 @@ decrypts traffic.
   capture time, key and signature strength, SAN, hostname vs SNI, chain linkage verified by
   signature. Trust is **not** asserted (no trust anchors are used). TLS 1.3 certificates are
   reported as encrypted / not observed.
-* **17 deterministic rules + 1 optional** (`backend/securemailscope/rules/engine.py`; TLS-007
+* **19 deterministic rules, 18 on by default** (`backend/securemailscope/rules/engine.py`; TLS-007
   non-AEAD suite is enabled only by the strict profile): plaintext sessions,
   plaintext credentials, STARTTLS rejection / missing TLS / pipelining, deprecated protocol
   versions, handshake failure, insecure/weak suites, no forward secrecy, weak DH/curves,

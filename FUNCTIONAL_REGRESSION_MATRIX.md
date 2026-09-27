@@ -22,7 +22,7 @@ for the state found at takeover).
 | M7 | DER parsing, subject/issuer/SAN/serial/fingerprint/validity/key/signature | Validity at analysis time | `certificates/analyzer.py` | 6 tests + fuzz | chain, weak, SNI fixtures | yes | WORKING |
 | M7 | Chain linkage, self-signed by signature, hostname match | Name comparison only | analyzer | yes | `smtp_starttls_tls12_chain`, `smtp_tls12_sni_mismatch` | yes | WORKING |
 | M7 | Trust-anchor validation | Not implemented (claimed) | - | - | - | - | PARTIAL (not performed; reported as unknown) |
-| M8 | 17 deterministic rules, evidence classes, frames | 9 rules; FPs/FNs | `rules/engine.py` | `test_rules_engine.py` + regressions | every fixture's exact rule set | yes | WORKING |
+| M8 | 19 deterministic rules (18 by default), evidence classes, frames | 9 rules; FPs/FNs | `rules/engine.py` | `test_rules_engine.py` + regressions | every fixture's exact rule set | yes | WORKING |
 | M9 | Score 0-100, dimensions, coverage, root causes, Unknown | Band gaps, non-monotone, 100 for no evidence | `scoring/` | 131 tests + 4 properties | fixtures | yes | WORKING |
 | M10 | CLI analyze + JSON/HTML/PDF | Reports posture-only; no PDF; XSS | `cli.py`, `reports/` | `test_m10_cli.py` | CLI subprocess on real captures | - | WORKING |
 | M11 | 10 features, Isolation Forest, explanations, reproducibility | Forced outliers, time-dependent, shared model | `ml/` | `test_m11_ml.py` (23) | `ml_mixed_estate` | yes | WORKING (supplementary; no accuracy claim) |

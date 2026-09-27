@@ -44,7 +44,7 @@ export const OverviewPage = () => {
             <div role="alert" className="notice">Analysis status: {c.analysis_status}{c.analysis_error ? `. ${c.analysis_error}` : ''}</div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-              <Panel title="Security posture">
+              <Panel title="Posture score">
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-semibold tabular-nums" aria-label={`Posture score ${fmtScore(c.posture_score)}`}>{fmtScore(c.posture_score)}</span>
                   {c.posture_score !== null && <span className="text-ink-3">/ 100</span>}
