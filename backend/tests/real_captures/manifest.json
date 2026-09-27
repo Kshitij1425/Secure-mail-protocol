@@ -1,6 +1,6 @@
 {
   "description": "Real email server/client captures generated in a controlled local test environment (not real-world or enterprise traffic).",
-  "generated_at": "2026-09-26T19:06:46.709584+00:00",
+  "generated_at": "2026-09-27T07:30:28.022512+00:00",
   "generator": "lab/real_mail_lab.py",
   "capture_method": "lab/recording_relay.py: application-layer bytes (SMTP/POP3 dialogue and TLS records) and their timing are exactly as exchanged by the real client and server; Ethernet/IPv4/TCP headers are reconstructed (lab addresses 10.77.0.0/16, standard server ports). No raw packet capture driver was available in the generating environment.",
   "plaintext_substitutions": "The lab host's name in Mailpit's plaintext greeting was replaced by a placeholder of equal length before TLS; no TLS bytes were modified.",
@@ -14,7 +14,7 @@
     {
       "name": "real_smtp_starttls_tls13",
       "file": "real_smtp_starttls_tls13.pcap",
-      "sha256": "f40ec5077a85ea96f5a73802338a708af092a040b5da977df3142743217293a2",
+      "sha256": "78219ecd1cb0e25d6f0999b2fc1ae760ff26bf1eae2302756ec82ee59360ecd0",
       "frames": 26,
       "intended_condition": "Secure modern TLS: SMTP submission with STARTTLS negotiating TLS 1.3",
       "servers": [
@@ -37,8 +37,8 @@
     {
       "name": "real_smtps_tls12_chain",
       "file": "real_smtps_tls12_chain.pcap",
-      "sha256": "31de0a14777b5edaee59205a10934b584f4b9d3c0ed7335ab0fcb61b18ec4d09",
-      "frames": 23,
+      "sha256": "9be0a3a4bd5754e07f926fb27c952b45c0b4e2f78ec020d556f0c4ea82905fb6",
+      "frames": 24,
       "intended_condition": "Secure TLS 1.2 (ECDHE, AEAD) over implicit TLS with a leaf + intermediate chain",
       "servers": [
         "Mailpit v1.31.2"
@@ -60,7 +60,7 @@
     {
       "name": "real_smtp_cert_expired_selfsigned",
       "file": "real_smtp_cert_expired_selfsigned.pcap",
-      "sha256": "926adb6a358111bca4dbd6e9d4b70f72704426a69d2b8b83feff010366911900",
+      "sha256": "a4fac81492e42885ae28788b8832455fe503df551c6b5bcd6d878690f9ad597a",
       "frames": 26,
       "intended_condition": "Certificate issue: self-signed certificate that expired 10 days before capture",
       "servers": [
@@ -86,7 +86,7 @@
     {
       "name": "real_smtp_tls10_legacy",
       "file": "real_smtp_tls10_legacy.pcap",
-      "sha256": "1303d4582ddfcf8ac271bc9eadc5042a9decfd5ba079a312c40252edf4eaf879",
+      "sha256": "10cc6790da5f3de1f742cc1a9627327e0ffffbad1fe4bef5281d998b3dfe924a",
       "frames": 30,
       "intended_condition": "Deprecated/weak TLS: TLS 1.0, TLS_RSA_WITH_AES_128_CBC_SHA (no forward secrecy), RSA-1024 leaf",
       "servers": [
@@ -113,7 +113,7 @@
     {
       "name": "real_smtp_tls_handshake_refused",
       "file": "real_smtp_tls_handshake_refused.pcap",
-      "sha256": "b43bc3eee9144cd1e7a583925b35b0cd8fd3c44df6deabf3c81165fdbb0e8d3a",
+      "sha256": "237051476a14ec52bcde3299c64bd6bc3703a9e6b111efc4c1f09e1efbbe2c2b",
       "frames": 13,
       "intended_condition": "STARTTLS failure: legacy client (TLS 1.0 only) refused by the server; no TLS established",
       "servers": [
@@ -139,7 +139,7 @@
     {
       "name": "real_smtp_starttls_rejected_plain_auth",
       "file": "real_smtp_starttls_rejected_plain_auth.pcap",
-      "sha256": "a3b9b0cca7add178ea1e6aa62bd421c921d94e49019827e35bff40b27cfccfe6",
+      "sha256": "3cb55679ce148fec21dfa6d027ebe9988dde6ff6f31089693f9d7878f5e67332",
       "frames": 22,
       "intended_condition": "Insecure transition: STARTTLS rejected (server reply 502); AUTH and message sent in plaintext",
       "servers": [
@@ -166,7 +166,7 @@
     {
       "name": "real_mixed_multiprotocol",
       "file": "real_mixed_multiprotocol.pcap",
-      "sha256": "4eebe5da7d1405a527f4f774cbbb15188d01d829e27afc1f3a9168d85d5ae750",
+      "sha256": "f873bd6b5e2552666431579151c1fbd3832d91ad7dd9eb73060680734a8b3b0f",
       "frames": 89,
       "intended_condition": "Mixed traffic: SMTP+STARTTLS (TLS 1.2), SMTPS (TLS 1.3), POP3S (TLS 1.2) and plaintext SMTP",
       "servers": [
@@ -215,6 +215,58 @@
         }
       ],
       "notes": ""
+    },
+    {
+      "name": "real_remediation_before",
+      "file": "real_remediation_before.pcap",
+      "sha256": "a43d660fd7fbd033c6e2851cd041d7d9e9ed53fdd5b5a61c301267b07c6e0374",
+      "frames": 29,
+      "intended_condition": "Remediation study (before): relay.lab.test on 10.77.0.50:587 with TLS 1.0, static RSA and an expired self-signed RSA-1024 certificate",
+      "servers": [
+        "aiosmtpd 1.4.6 (Python ssl / OpenSSL 3.0.13 30 Jan 2024)"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "SMTP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.0",
+          "findings": [
+            "CERT-001",
+            "CERT-003",
+            "CERT-005",
+            "TLS-001",
+            "TLS-004"
+          ],
+          "certificates": 1,
+          "implicit_tls": false,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": "Compare with real_remediation_after (same server address and port)."
+    },
+    {
+      "name": "real_remediation_after",
+      "file": "real_remediation_after.pcap",
+      "sha256": "1e6fdeda1f2909291cd524d76ea156ba2fd80b28c43e937b001ef1accc11429e",
+      "frames": 27,
+      "intended_condition": "Remediation study (after): same asset reconfigured with TLS 1.2+ (ECDHE, AEAD) and a new CA-issued RSA-2048 certificate chain",
+      "servers": [
+        "Mailpit v1.31.2"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "SMTP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.2",
+          "findings": [],
+          "certificates": 2,
+          "implicit_tls": false,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": "Client capped at TLS 1.2 so that the new certificate is observable."
     }
   ]
 }

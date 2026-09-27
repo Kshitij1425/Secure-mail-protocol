@@ -266,6 +266,29 @@ def run():
               session("POP3", "TLS_ESTABLISHED", "TLSv1.2", [], certs=2, implicit=True),
               session("SMTP", "PLAINTEXT", None, ["PROTO-001"], handshake=None)],
              ["Mailpit v1.31.2", "aiosmtpd 1.4.6"])
+        # 8/9. Remediation pair on the SAME asset (10.77.0.50:587): legacy configuration, then remediated.
+        old = issue("relay.lab.test", san=["relay.lab.test"], key_bits=1024, valid_from_days=-700, valid_to_days=-5)
+        octx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        octx.minimum_version = octx.maximum_version = ssl.TLSVersion.TLSv1
+        octx.set_ciphers("AES128-SHA:@SECLEVEL=0")
+        octx.load_cert_chain(lab.write("old.pem", old.pem), lab.write("old.key", old.key_pem))
+        p = lab.aiosmtpd(tls_context=octx, ident="relay.lab.test ESMTP")
+        with relay(p, 587, "10.77.3.10", "10.77.0.50") as r:
+            smtp_starttls(r.port, client_ctx(min_v=ssl.TLSVersion.TLSv1, max_v=ssl.TLSVersion.TLSv1,
+                                             ciphers="AES128-SHA:@SECLEVEL=0"))
+        save("real_remediation_before", [r], "Remediation study (before): relay.lab.test on 10.77.0.50:587 with TLS 1.0, "
+             "static RSA and an expired self-signed RSA-1024 certificate",
+             [session("SMTP", "TLS_ESTABLISHED", "TLSv1.0", ["TLS-001", "TLS-004", "CERT-001", "CERT-003", "CERT-005"],
+                      certs=1)], ["aiosmtpd 1.4.6 (Python ssl / " + ssl.OPENSSL_VERSION + ")"],
+             "Compare with real_remediation_after (same server address and port).")
+        _, inter, new = lab_chain("relay.lab.test")
+        p, _ = lab.mailpit(cert=new, chain=[inter])
+        with relay(p, 587, "10.77.3.10", "10.77.0.50") as r:
+            smtp_starttls(r.port, client_ctx(max_v=ssl.TLSVersion.TLSv1_2))
+        save("real_remediation_after", [r], "Remediation study (after): same asset reconfigured with TLS 1.2+ "
+             "(ECDHE, AEAD) and a new CA-issued RSA-2048 certificate chain",
+             [session("SMTP", "TLS_ESTABLISHED", "TLSv1.2", [], certs=2)], ["Mailpit v1.31.2"],
+             "Client capped at TLS 1.2 so that the new certificate is observable.")
     finally:
         lab.close()
 

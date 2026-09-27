@@ -67,9 +67,13 @@ def test_html_escapes_untrusted_values():
 
 def test_html_sections_present():
     html = render_html(doc_for("smtp_starttls_tls12_chain.pcap")).decode()
-    for section in ("Executive summary", "Capture metadata", "Posture by dimension", "Prioritised remediation",
-                    "Findings", "Email sessions", "Certificates", "ML anomalies", "Method &amp; limitations"):
-        assert section in html
+    sections = ["Executive summary", "Capture metadata", "Security posture", "Protocol summary", "TLS summary",
+                "Certificate summary", "Findings", "Affected sessions", "Anomalies (supplementary ML)",
+                "Evidence timeline", "Recommendations", "Methodology", "Limitations", "Integrity"]
+    positions = [html.index(f"</span>{s}</h2>") for s in sections]
+    assert positions == sorted(positions), "the 14 report sections must appear in order"
+    assert "Passive analysis of a stored network capture" in html
+    assert "not affiliated with or endorsed by any government agency" in html
 
 
 def test_pdf_report_generated_and_escaped():

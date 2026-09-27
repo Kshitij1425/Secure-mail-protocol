@@ -107,12 +107,14 @@ class AnalysisService:
             tmp.unlink(missing_ok=True)
             raise
 
-    def create_capture(self, tmp: Path, sha: str, size: int, fmt: str, display: str, db: Session) -> CaptureDB:
+    def create_capture(self, tmp: Path, sha: str, size: int, fmt: str, display: str, db: Session,
+                       policy_profile: str = "balanced") -> CaptureDB:
         capture_id = str(uuid.uuid4())
         stored = f"{capture_id}.{fmt}"
         final = Path(get_settings().upload_dir) / stored
         os.replace(tmp, final)
         capture = CaptureDB(capture_id=capture_id, filename=display, stored_filename=stored, file_hash=sha,
+                            policy_profile=policy_profile,
                             file_path=str(final), file_size=size, file_format=fmt, analysis_status="pending")
         db.add(capture)
         db.commit()
@@ -133,6 +135,7 @@ class AnalysisService:
             capture.analysis_status = "processing"
             db.commit()
             orchestrator = Orchestrator(securemailscope_version=__version__, max_packets=settings.max_packets,
+                                        policy_profile=capture.policy_profile or "balanced",
                                         time_budget_seconds=settings.analysis_time_budget_seconds)
             result = orchestrator.analyze(capture.file_path, session_prefix=f"{capture.capture_id}~")
             self._persist(capture, result, db, time.perf_counter() - started)
@@ -238,6 +241,7 @@ class AnalysisService:
         capture.posture_status = posture.status.value
         capture.scoring_policy_version = posture.scoring_policy_version
         capture.rule_policy_version = meta.get("rule_policy_version")
+        capture.policy_profile = meta.get("policy_profile", capture.policy_profile)
         capture.ml_engine_version = model_version
         capture.ml_status = (meta.get("ml_engine_summary") or {}).get("status")
         capture.ml_anomalies_detected = meta.get("ml_anomalies_detected", 0)
@@ -254,13 +258,39 @@ class AnalysisService:
                     f"{len(result.findings)} findings")
 
     # ------------------------------------------------------------ reports
-    def generate_report(self, capture: CaptureDB, fmt: str, db: Session) -> ReportDB:
+    def reanalyze(self, source: CaptureDB, policy_profile: str, db: Session) -> CaptureDB:
+        """Analyse the same stored capture again (e.g. under another policy profile) as a new analysis.
+        The evidence file is copied so every analysis owns an immutable file."""
+        import shutil
+        src = Path(source.file_path)
+        if not src.is_file():
+            raise ServiceError(404, "Stored capture file is no longer available")
+        fd, tmp_name = tempfile.mkstemp(prefix="incoming-", suffix=".part", dir=Path(get_settings().upload_dir))
+        os.close(fd)
+        shutil.copyfile(src, tmp_name)
+        tmp = Path(tmp_name)
+        if hashlib.sha256(tmp.read_bytes()).hexdigest() != source.file_hash:
+            tmp.unlink(missing_ok=True)
+            raise ServiceError(409, "Stored capture no longer matches its recorded SHA-256")
+        capture = self.create_capture(tmp, source.file_hash, source.file_size, source.file_format or "pcap",
+                                      source.filename, db, policy_profile=policy_profile)
+        return self.run_analysis(capture, db)
+
+    @staticmethod
+    def document(capture: CaptureDB, redact: bool = False) -> Dict[str, Any]:
+        from securemailscope.reports.redact import raw_label, redact_document
+        if capture.analysis_status != "completed" or not capture.document_json:
+            raise ServiceError(409, "Analysis is not complete for this capture")
+        doc = json.loads(capture.document_json)
+        return redact_document(doc) if redact else raw_label(doc)
+
+    def generate_report(self, capture: CaptureDB, fmt: str, db: Session, redact: bool = False) -> ReportDB:
         if fmt not in RENDERERS:
             raise ServiceError(422, "Unsupported report format (json, html, pdf)")
         if capture.analysis_status != "completed" or not capture.document_json:
             raise ServiceError(409, "Analysis is not complete for this capture")
         render, _ = RENDERERS[fmt]
-        doc = json.loads(capture.document_json)
+        doc = self.document(capture, redact)
         try:
             data = render(doc)
         except ReportUnavailable as e:
@@ -271,7 +301,7 @@ class AnalysisService:
         path = out_dir / f"{report_id}.{fmt}"
         path.write_bytes(data)
         row = ReportDB(capture_id=capture.capture_id, report_id=report_id, report_type=fmt, file_path=str(path),
-                       file_size=len(data), sha256=hashlib.sha256(data).hexdigest())
+                       file_size=len(data), sha256=hashlib.sha256(data).hexdigest(), redacted=redact)
         db.add(row)
         db.commit()
         db.refresh(row)
@@ -287,3 +317,58 @@ class AnalysisService:
         except ValueError:
             return None
         return p if p.is_file() else None
+
+
+def evidence_chain(doc: Dict[str, Any], finding_id: str) -> Optional[Dict[str, Any]]:
+    """Assemble finding -> session -> TCP stream -> TLS -> certificate -> evidence -> recommendation
+    from one stored analysis document. Every link states whether it was observed."""
+    f = next((x for x in doc.get("findings", []) if x["finding_id"] == finding_id), None)
+    if f is None:
+        return None
+    sess = next((s for s in doc.get("sessions", []) if s["session_id"] == f["session_id"]), None)
+    certs = [c for c in doc.get("certificates", []) if sess and c["session_id"] == sess["session_id"]]
+    pos = f["evidence"].get("chain_position")
+    related_cert = next((c for c in certs if c["chain_position"] == pos), None) if pos is not None else \
+        next((c for c in certs if c["chain_position"] == 0), None)
+    tls = (sess or {}).get("tls")
+    frames = set(f["evidence_frames"])
+    events = [e for e in (sess or {}).get("timeline", []) if e.get("frame") in frames or e.get("finding_id") == finding_id]
+    if tls is None:
+        tls_link = {"status": "NOT_OBSERVED", "reason": "No TLS handshake was observed in this session."}
+    else:
+        tls_link = {"status": "OBSERVED" if tls.get("negotiated_version") else "PARTIAL",
+                    "negotiated_version": tls.get("negotiated_version"), "cipher_suite": tls.get("cipher_suite"),
+                    "key_exchange": tls.get("key_exchange"), "key_exchange_group": tls.get("key_exchange_group"),
+                    "forward_secrecy": tls.get("forward_secrecy"), "sni": tls.get("sni"),
+                    "handshake_status": tls.get("handshake_status"),
+                    "certificate_visibility": tls.get("certificate_visibility")}
+    if related_cert:
+        cert_link = {"status": "OBSERVED", "certificate_id": related_cert["certificate_id"],
+                     "subject": related_cert["subject"], "issuer": related_cert["issuer"],
+                     "serial_number": related_cert["serial_number"],
+                     "fingerprint_sha256": related_cert["fingerprint_sha256"],
+                     "not_before": related_cert["not_before"], "not_after": related_cert["not_after"],
+                     "is_expired": related_cert["is_expired"], "chain_position": related_cert["chain_position"],
+                     "trust": "NOT_EVALUATED (no trust anchors)"}
+    elif tls and tls.get("certificate_visibility") == "encrypted_tls13":
+        cert_link = {"status": "NOT_OBSERVABLE", "reason": "TLS 1.3 encrypts the server certificate."}
+    else:
+        cert_link = {"status": "NOT_OBSERVED", "reason": "No certificate was observed in this session."}
+    return {
+        "finding": {k: f[k] for k in ("finding_id", "rule_id", "title", "severity", "confidence", "evidence_type",
+                                      "dimension", "description", "risk_contribution")},
+        "session": None if sess is None else {
+            "session_id": sess["session_id"], "protocol": sess["protocol"], "implicit_tls": sess["implicit_tls"],
+            "client": sess["client"], "server": sess["server"], "start_time": sess["start_time"],
+            "starttls_state": sess["starttls"]["final_state"], "detection": sess["detection"]},
+        "tcp_stream": None if sess is None else {"stream_id": sess["stream_id"], "first_frame": sess["first_frame"],
+                                                  "last_frame": sess["last_frame"],
+                                                  "quality": sess["reconstruction"]["quality"]},
+        "tls": tls_link,
+        "certificate": cert_link,
+        "evidence": {"class": f["evidence_type"], "values": f["evidence"], "frames": f["evidence_frames"],
+                     "events": events},
+        "recommendation": {"action": f["recommendation"], "why_it_matters": f.get("why_it_matters"),
+                           "expected_effect": f.get("expected_effect"), "references": f["references"]},
+        "policy_profile": doc.get("analysis", {}).get("policy_profile"),
+    }

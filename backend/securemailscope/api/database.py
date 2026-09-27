@@ -24,7 +24,7 @@ from securemailscope.api.config import get_settings
 logger = logging.getLogger("securemailscope.api.database")
 Base = declarative_base()
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 class UTCDateTime(TypeDecorator):
@@ -89,6 +89,7 @@ class CaptureDB(Base):
     posture_status = Column(String(32), nullable=True)
     scoring_policy_version = Column(String(50), nullable=True)
     rule_policy_version = Column(String(50), nullable=True)
+    policy_profile = Column(String(32), default="balanced")
     ml_engine_version = Column(String(50), nullable=True)
     ml_status = Column(String(64), nullable=True)
     ml_anomalies_detected = Column(Integer, default=0)
@@ -252,6 +253,7 @@ class ReportDB(Base):
     file_path = Column(String(512), nullable=False)
     file_size = Column(Integer, nullable=False)
     sha256 = Column(String(64), nullable=True)
+    redacted = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=get_utc_now)
 
     capture = relationship("CaptureDB", back_populates="reports")
@@ -301,13 +303,18 @@ def init_db():
     engine = get_engine()
     insp = inspect(engine)
     tables = set(insp.get_table_names())
-    if tables and "schema_info" not in tables:
+    outdated = bool(tables) and "schema_info" not in tables
+    if not outdated and "schema_info" in tables:
+        with engine.connect() as conn:
+            row = conn.exec_driver_sql("SELECT value FROM schema_info WHERE key='version'").fetchone()
+            outdated = row is None or row[0] != SCHEMA_VERSION
+    if outdated:
         url = get_settings().database_url
         if url.startswith("sqlite:///"):
             path = url[len("sqlite:///"):]
             engine.dispose()
             if os.path.exists(path):
-                backup = f"{path}.schema-v1-{datetime.now().strftime('%Y%m%d%H%M%S')}.bak"
+                backup = f"{path}.schema-old-{datetime.now().strftime('%Y%m%d%H%M%S')}.bak"
                 os.replace(path, backup)
                 logger.warning(f"Old database schema detected; preserved as {os.path.basename(backup)}")
             reset_engine()

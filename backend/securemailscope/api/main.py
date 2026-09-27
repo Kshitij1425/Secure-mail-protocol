@@ -10,10 +10,10 @@ import os
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -26,7 +26,10 @@ from securemailscope.api.schemas import (AnalysisResponse, AnomalyDetail, Anomal
                                          CaptureSummary, CertificateDetail, CertificateSummary, FindingDetail,
                                          FindingStatusUpdate, FindingSummary, HealthResponse, PostureResponse,
                                          ReportSummary, SessionDetail, SessionSummary)
-from securemailscope.api.services.analyzers import AnalysisService, ServiceError
+from securemailscope.api.services.analyzers import AnalysisService, ServiceError, evidence_chain
+from securemailscope.policy import PROFILES
+from securemailscope.reports.render import safe_report_basename
+from securemailscope.rules.engine import RULE_GUIDANCE
 
 logger = logging.getLogger("securemailscope.api")
 FINDING_STATUSES = {"open", "acknowledged", "in_progress", "resolved", "false_positive"}
@@ -157,12 +160,25 @@ def health_check(db: Session = Depends(get_db)):
 
 
 # --------------------------------------------------------------------- analyze
+@app.get("/policies")
+def list_policies():
+    """Available policy profiles with their thresholds and documented rationale."""
+    return [p.to_dict() for p in PROFILES.values()]
+
+
+def _check_policy(policy: str) -> str:
+    if policy not in PROFILES:
+        raise HTTPException(status_code=422, detail=f"Unknown policy profile. Available: {', '.join(PROFILES)}")
+    return policy
+
+
 @app.post("/analyze", response_model=AnalysisResponse)
-def analyze_capture(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def analyze_capture(file: UploadFile = File(...), policy: str = Form("balanced"), db: Session = Depends(get_db)):
     """Upload a PCAP/PCAPNG capture and run the full analysis pipeline synchronously."""
+    _check_policy(policy)
     try:
         tmp, sha, size, fmt, display = service.receive_upload(file.file, file.filename)
-        capture = service.create_capture(tmp, sha, size, fmt, display, db)
+        capture = service.create_capture(tmp, sha, size, fmt, display, db, policy_profile=policy)
         service.run_analysis(capture, db)
     except ServiceError as e:
         _svc(e)
@@ -175,6 +191,11 @@ def _capture_or_404(db: Session, capture_id: str) -> CaptureDB:
     if not c:
         raise HTTPException(status_code=404, detail="Capture not found")
     return c
+
+
+def _severity_counts(db, capture_id) -> dict:
+    return {sev: n for sev, n in db.query(FindingDB.severity, func.count(FindingDB.id))
+            .filter(FindingDB.capture_id == capture_id).group_by(FindingDB.severity)}
 
 
 def _count(db, model, capture_id, *filters) -> int:
@@ -192,6 +213,7 @@ def list_captures(db: Session = Depends(get_db), status: Optional[str] = None,
         s = CaptureSummary.model_validate(c)
         s.findings_count = _count(db, FindingDB, c.capture_id)
         s.anomalies_count = _count(db, AnomalyDB, c.capture_id, AnomalyDB.is_anomaly.is_(True))
+        s.severity_counts = _severity_counts(db, c.capture_id)
         out.append(s)
     return out
 
@@ -205,8 +227,7 @@ def get_capture(capture_id: str, db: Session = Depends(get_db)):
     d.sessions_count = _count(db, SessionDB, capture_id)
     d.certificates_count = _count(db, CertificateDB, capture_id)
     d.reports_count = _count(db, ReportDB, capture_id)
-    d.severity_counts = {sev: n for sev, n in db.query(FindingDB.severity, func.count(FindingDB.id))
-                         .filter(FindingDB.capture_id == capture_id).group_by(FindingDB.severity)}
+    d.severity_counts = _severity_counts(db, capture_id)
     meta = json.loads(c.metadata_json) if c.metadata_json else {}
     d.coverage = meta.get("coverage", {})
     d.ingestion = {k: meta.get(k) for k in ("total_packets", "valid_packets", "malformed_packets", "ignored_non_ip",
@@ -270,21 +291,90 @@ def get_capture_posture(capture_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/captures/{capture_id}/document")
-def get_capture_document(capture_id: str, db: Session = Depends(get_db)):
-    """The canonical analysis document (identical to the JSON report)."""
+def get_capture_document(capture_id: str, redact: bool = False, db: Session = Depends(get_db)):
+    """The canonical analysis document, labelled RAW or REDACTED (identical to the JSON report)."""
     c = _capture_or_404(db, capture_id)
     if not c.document_json:
         raise HTTPException(status_code=404, detail="Analysis not available")
-    return JSONResponse(json.loads(c.document_json))
+    return JSONResponse(service.document(c, redact))
 
 
 @app.post("/captures/{capture_id}/reports", response_model=ReportSummary)
-def create_report(capture_id: str, format: str = Query(..., pattern="^(json|html|pdf)$"), db: Session = Depends(get_db)):
+def create_report(capture_id: str, format: str = Query(..., pattern="^(json|html|pdf)$"), redact: bool = False,
+                  db: Session = Depends(get_db)):
     c = _capture_or_404(db, capture_id)
     try:
-        return service.generate_report(c, format, db)
+        return service.generate_report(c, format, db, redact=redact)
     except ServiceError as e:
         _svc(e)
+
+
+@app.post("/captures/{capture_id}/reanalyze", response_model=AnalysisResponse)
+def reanalyze_capture(capture_id: str, policy: str = Query("balanced"), db: Session = Depends(get_db)):
+    """Analyse the same stored capture again (e.g. under another policy profile) as a new analysis."""
+    _check_policy(policy)
+    src = _capture_or_404(db, capture_id)
+    try:
+        c = service.reanalyze(src, policy, db)
+    except ServiceError as e:
+        _svc(e)
+    return AnalysisResponse(capture_id=c.capture_id, status=c.analysis_status, message=f"Re-analysed with policy {policy}")
+
+
+def _doc(db, capture_id, redact=False):
+    try:
+        return service.document(_capture_or_404(db, capture_id), redact)
+    except ServiceError as e:
+        _svc(e)
+
+
+@app.get("/captures/{capture_id}/timeline")
+def get_timeline(capture_id: str, session_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Capture-time events (TCP, protocol, STARTTLS, TLS, certificate, findings) plus analysis-phase ML events."""
+    tl = _doc(db, capture_id).get("timeline", [])
+    return [e for e in tl if session_id is None or e.get("session_id") == session_id]
+
+
+@app.get("/captures/{capture_id}/certificate-inventory")
+def get_certificate_inventory(capture_id: str, db: Session = Depends(get_db)):
+    return _doc(db, capture_id).get("certificate_inventory", [])
+
+
+@app.get("/captures/{capture_id}/bundle")
+def get_evidence_bundle(capture_id: str, redact: bool = False, db: Session = Depends(get_db)):
+    """Deterministic ZIP evidence bundle (JSON + SHA-256 manifest). No packet payloads."""
+    from securemailscope.reports.bundle import build_bundle
+    c = _capture_or_404(db, capture_id)
+    data = build_bundle(_raw_doc(c), redact=redact)
+    name = f"{safe_report_basename(c.filename)}_evidence_{'redacted' if redact else 'raw'}.zip"
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.get("/captures/{capture_id}/stix")
+def get_stix(capture_id: str, redact: bool = False, db: Session = Depends(get_db)):
+    """STIX 2.1 bundle of observations (no indicators; findings as notes)."""
+    from securemailscope.reports.stix import build_stix_bundle
+    c = _capture_or_404(db, capture_id)
+    data = json.dumps(build_stix_bundle(_doc(db, capture_id, redact)), indent=2).encode()
+    name = f"{safe_report_basename(c.filename)}_stix_{'redacted' if redact else 'raw'}.json"
+    return Response(data, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _raw_doc(c):
+    if c.analysis_status != "completed" or not c.document_json:
+        raise HTTPException(status_code=409, detail="Analysis is not complete for this capture")
+    return json.loads(c.document_json)
+
+
+@app.get("/compare")
+def compare_captures(a: str, b: str, db: Session = Depends(get_db)):
+    """Differences between two stored analyses (A = baseline, B = later)."""
+    from securemailscope.reports.compare import compare_documents
+    if a == b:
+        raise HTTPException(status_code=422, detail="Choose two different analyses to compare")
+    return compare_documents(_raw_doc(_capture_or_404(db, a)), _raw_doc(_capture_or_404(db, b)))
 
 
 # -------------------------------------------------------------------- sessions
@@ -339,6 +429,8 @@ def _finding_detail(db: Session, f: FindingDB) -> FindingDetail:
     d.evidence_frames = json.loads(f.evidence_frames) if f.evidence_frames else []
     d.affected_sessions = [s for (s,) in db.query(SessionFindingDB.session_id)
                            .filter(SessionFindingDB.finding_id == f.finding_id)]
+    d.why_it_matters = RULE_GUIDANCE.get(f.rule_id, {}).get("why")
+    d.expected_effect = RULE_GUIDANCE.get(f.rule_id, {}).get("effect")
     return d
 
 
@@ -348,6 +440,20 @@ def get_finding(finding_id: str, db: Session = Depends(get_db)):
     if not f:
         raise HTTPException(status_code=404, detail="Finding not found")
     return _finding_detail(db, f)
+
+
+@app.get("/findings/{finding_id}/chain")
+def get_finding_chain(finding_id: str, db: Session = Depends(get_db)):
+    """Evidence chain: finding -> session -> TCP stream -> TLS -> certificate -> evidence -> recommendation."""
+    f = db.query(FindingDB).filter(FindingDB.finding_id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    chain = evidence_chain(_raw_doc(_capture_or_404(db, f.capture_id)), finding_id)
+    if chain is None:
+        raise HTTPException(status_code=404, detail="Finding not found in the stored analysis")
+    chain["capture_id"] = f.capture_id
+    chain["status"] = f.status
+    return chain
 
 
 @app.patch("/findings/{finding_id}/status", response_model=FindingDetail)
@@ -441,8 +547,7 @@ def download_report(report_id: str, db: Session = Depends(get_db)):
     if path is None:
         raise HTTPException(status_code=404, detail="Report file not found")
     c = db.query(CaptureDB).filter(CaptureDB.capture_id == r.capture_id).first()
-    from securemailscope.reports.render import safe_report_basename
-    name = f"{safe_report_basename(c.filename if c else 'capture')}_report.{r.report_type}"
+    name = f"{safe_report_basename(c.filename if c else 'capture')}_report{'_redacted' if r.redacted else ''}.{r.report_type}"
     # Always download (attachment), never render in the API origin.
     media = {"json": "application/json", "html": "text/html", "pdf": "application/pdf"}.get(r.report_type,
                                                                                           "application/octet-stream")

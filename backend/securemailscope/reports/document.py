@@ -9,7 +9,7 @@ integration tests assert both producers yield the same document.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from securemailscope.rules.engine import RULE_CATALOGUE, Severity
+from securemailscope.rules.engine import RULE_CATALOGUE, RULE_GUIDANCE, Severity
 
 REPORT_VERSION = "2.0"
 SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
@@ -102,6 +102,7 @@ def session_doc(s, capture_id: Optional[str] = None) -> Dict[str, Any]:
             {"links": s.chain.get("links", [])} if s.chain else {}),
         "evidence_frames": dict(s.evidence_frames),
         "finding_ids": [f.finding_id for f in s.findings],
+        "timeline": [dict(e, ts=_iso(e["ts"]) if e.get("ts") is not None else None) for e in s.timeline],
         "certificate_ids": [f"{s.session_id}~c{c.chain_position}" for c in s.certificates],
     }
 
@@ -152,6 +153,8 @@ def finding_doc(f, impacts: Dict[str, float]) -> Dict[str, Any]:
         "evidence": f.evidence,
         "evidence_frames": list(f.evidence_frames),
         "risk_contribution": round(impacts.get(f.finding_id, 0.0), 2),
+        "why_it_matters": RULE_GUIDANCE.get(f.rule_id, {}).get("why"),
+        "expected_effect": RULE_GUIDANCE.get(f.rule_id, {}).get("effect"),
     }
 
 
@@ -187,18 +190,111 @@ def remediation_plan(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                                               if f["rule_id"] in RULE_CATALOGUE else f["title"],
                                               "severity": f["severity"], "recommendation": f["recommendation"],
                                               "references": f["references"], "affected_sessions": set(),
+                                              "why_it_matters": RULE_GUIDANCE.get(f["rule_id"], {}).get("why"),
+                                              "expected_effect": RULE_GUIDANCE.get(f["rule_id"], {}).get("effect"),
+                                              "finding_ids": [],
                                               "finding_count": 0, "risk_contribution": 0.0})
         if SEVERITY_RANK[f["severity"]] < SEVERITY_RANK[e["severity"]]:
             e["severity"] = f["severity"]
         e["affected_sessions"].add(f["session_id"])
+        e["finding_ids"].append(f["finding_id"])
         e["finding_count"] += 1
         e["risk_contribution"] = max(e["risk_contribution"], f.get("risk_contribution", 0.0))
     plan = sorted(by_rule.values(), key=lambda e: (SEVERITY_RANK[e["severity"]], -len(e["affected_sessions"]),
                                                    -e["risk_contribution"], e["rule_id"]))
     for i, e in enumerate(plan, 1):
         e["priority"] = i
+        e["session_ids"] = sorted(e["affected_sessions"])
         e["affected_sessions"] = len(e["affected_sessions"])
     return plan
+
+
+def certificate_inventory(certs: List[Dict[str, Any]], sessions: List[Dict[str, Any]],
+                          capture_start: Optional[str]) -> List[Dict[str, Any]]:
+    """Distinct certificates (by fingerprint) with reuse across sessions and servers."""
+    by_sess = {s["session_id"]: s for s in sessions}
+    inv: Dict[str, Dict[str, Any]] = {}
+    ref = datetime.fromisoformat(capture_start) if capture_start else None
+    for c in certs:
+        e = inv.setdefault(c["fingerprint_sha256"], {
+            "fingerprint_sha256": c["fingerprint_sha256"], "subject": c["subject"], "issuer": c["issuer"],
+            "common_name": c["common_name"], "serial_number": c["serial_number"], "not_before": c["not_before"],
+            "not_after": c["not_after"], "public_key_algorithm": c["public_key_algorithm"],
+            "public_key_size_bits": c["public_key_size_bits"], "signature_algorithm": c["signature_algorithm"],
+            "san_list": c["san_list"], "is_ca": c["is_ca"], "is_self_signed": c["is_self_signed"],
+            "is_expired": c["is_expired"], "is_not_yet_valid": c["is_not_yet_valid"], "weak_key": c["weak_key"],
+            "weak_signature": c["weak_signature"], "trust_status": c["trust_status"],
+            "days_to_expiry_at_capture": None, "certificate_ids": [], "session_ids": [], "servers": [],
+            "sni_requested": [], "chain_positions": [], "extraction": "observed in cleartext Certificate message",
+            "chain_linkage": set(), "trust_validation": "not performed (no trust anchors)"})
+        if ref and c["not_after"]:
+            e["days_to_expiry_at_capture"] = (datetime.fromisoformat(c["not_after"]) - ref).days
+        e["certificate_ids"].append(c["certificate_id"])
+        e["chain_positions"].append(c["chain_position"])
+        sess = by_sess.get(c["session_id"])
+        if sess and sess["session_id"] not in e["session_ids"]:
+            e["session_ids"].append(sess["session_id"])
+            srv = f"{sess['server']['ip']}:{sess['server']['port']}"
+            if srv not in e["servers"]:
+                e["servers"].append(srv)
+            sni = (sess.get("tls") or {}).get("sni")
+            if sni and sni not in e["sni_requested"]:
+                e["sni_requested"].append(sni)
+        if c["issued_by_next"]:
+            e["chain_linkage"].add(c["issued_by_next"])
+    out = []
+    for e in inv.values():
+        e["chain_linkage"] = sorted(e["chain_linkage"])
+        e["session_count"] = len(e["session_ids"])
+        out.append(e)
+    return sorted(out, key=lambda e: (-e["session_count"], e["subject"] or ""))
+
+
+def protocol_summary(sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for sess in sessions:
+        p = out.setdefault(sess["protocol"], {"sessions": 0, "implicit_tls": 0, "starttls_established": 0,
+                                              "starttls_rejected": 0, "plaintext": 0, "tls_failed": 0, "other": 0})
+        p["sessions"] += 1
+        st = sess["starttls"]["final_state"]
+        if sess["implicit_tls"]:
+            p["implicit_tls"] += 1
+        elif st in ("TLS_ESTABLISHED", "TLS_HANDSHAKE_STARTED"):
+            p["starttls_established"] += 1
+        elif st == "STARTTLS_REJECTED":
+            p["starttls_rejected"] += 1
+        elif st == "PLAINTEXT":
+            p["plaintext"] += 1
+        elif st == "TLS_FAILED":
+            p["tls_failed"] += 1
+        else:
+            p["other"] += 1
+    return out
+
+
+def tls_summary(sessions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    versions: Dict[str, int] = {}
+    ciphers: Dict[str, int] = {}
+    kx: Dict[str, int] = {}
+    fs = {"yes": 0, "no": 0, "unknown": 0}
+    visibility: Dict[str, int] = {}
+    for sess in sessions:
+        t = sess.get("tls")
+        if not t:
+            continue
+        v = t.get("negotiated_version") or "not observed"
+        versions[v] = versions.get(v, 0) + 1
+        if t.get("cipher_suite"):
+            ciphers[t["cipher_suite"]] = ciphers.get(t["cipher_suite"], 0) + 1
+        k = t.get("key_exchange_group") or t.get("key_exchange")
+        if k:
+            kx[k] = kx.get(k, 0) + 1
+        f = t.get("forward_secrecy")
+        fs["yes" if f is True else "no" if f is False else "unknown"] += 1
+        vis = t.get("certificate_visibility") or "not_observed"
+        visibility[vis] = visibility.get(vis, 0) + 1
+    return {"versions": versions, "cipher_suites": ciphers, "key_exchange": kx, "forward_secrecy": fs,
+            "certificate_visibility": visibility}
 
 
 def document_from_result(result, capture_id: Optional[str] = None, filename: Optional[str] = None,
@@ -240,10 +336,18 @@ def document_from_result(result, capture_id: Optional[str] = None, filename: Opt
             "scoring_policy_version": posture.scoring_policy_version,
             "ml_model_version": (meta.get("ml_engine_summary") or {}).get("model_version"),
             "certificate_validity_reference": meta.get("certificate_validity_reference"),
+            "policy_profile": meta.get("policy_profile", "balanced"),
+            "policy_profile_detail": meta.get("policy_profile_detail"),
+            "mode": "passive (stored capture only; no traffic generated, nothing decrypted)",
             "tcp": meta.get("tcp"),
         },
         "posture": pdict,
         "remediation_plan": remediation_plan(findings),
+        "protocol_summary": protocol_summary(sessions),
+        "tls_summary": tls_summary(sessions),
+        "certificate_inventory": certificate_inventory(certs, sessions, _iso(meta.get("start_time"))),
+        "timeline": sorted((e for sess in sessions for e in sess["timeline"]),
+                           key=lambda e: (e["ts"] is None, e["ts"] or "", e["frame"] or 0)),
         "sessions": sessions,
         "findings": findings,
         "certificates": certs,

@@ -105,6 +105,11 @@ RULE_CATALOGUE: Dict[str, RuleDefinition] = {r.rule_id: r for r in [
                    "Remove NULL/EXPORT/anonymous/RC4/DES suites from client configurations.",
                    "RFC 7465; NIST SP 800-52 Rev. 2",
                    "Offered, not negotiated: exploitable only if the server selects one."),
+    RuleDefinition("TLS-007", "Non-AEAD (CBC) Cipher Suite Negotiated", "Cryptographic Posture", "cryptography",
+                   Severity.MEDIUM,
+                   "Prefer AEAD suites (AES-GCM, ChaCha20-Poly1305) or TLS 1.3.",
+                   "RFC 9325 Section 4.2",
+                   "Optional rule: enabled by the Strict policy profile only."),
     RuleDefinition("CERT-001", "Expired X.509 Certificate", "Certificate Security", "certificate", Severity.HIGH,
                    "Renew the certificate; automate renewal (ACME).", "RFC 5280 §4.1.2.5"),
     RuleDefinition("CERT-002", "X.509 Certificate Not Yet Valid", "Certificate Security", "certificate",
@@ -131,6 +136,49 @@ RULE_CATALOGUE: Dict[str, RuleDefinition] = {r.rule_id: r for r in [
                    "Serve the correct intermediate(s) in order: leaf, then its issuer.", "RFC 5246 §7.4.2; RFC 8446 §4.4.2",
                    "Linkage check only; trust anchors are not evaluated."),
 ]}
+
+# Remediation guidance: why each issue matters and the security effect of fixing it.
+# Statements are deliberately limited to what the standards cited in the catalogue support.
+RULE_GUIDANCE: Dict[str, Dict[str, str]] = {
+    "PROTO-001": {"why": "Anyone with access to the network path can read and modify the session, including message content and envelope data.",
+                  "effect": "Session contents become confidential and integrity-protected in transit."},
+    "PROTO-002": {"why": "Cleartext mechanisms send reusable credentials that an on-path observer can capture and replay.",
+                  "effect": "Credentials are only ever sent inside an established TLS session."},
+    "STLS-001": {"why": "Opportunistic STARTTLS that fails silently lets mail flow in plaintext; an active attacker can force this by removing the STARTTLS response.",
+                 "effect": "Clients either upgrade to TLS or refuse to continue, instead of falling back to plaintext."},
+    "STLS-002": {"why": "Without the TLS handshake in the capture, the session's protection cannot be assessed.",
+                 "effect": "A complete capture allows the session to be assessed."},
+    "STLS-003": {"why": "Commands buffered before the TLS upgrade may be executed inside the TLS session by vulnerable servers (CVE-2011-0411 class).",
+                 "effect": "Removes the command-injection window around the STARTTLS transition."},
+    "TLS-001": {"why": "SSLv3, TLS 1.0 and TLS 1.1 lack modern cryptographic protections and are formally deprecated.",
+                "effect": "Sessions negotiate TLS 1.2 or TLS 1.3 with current cipher and integrity protections."},
+    "TLS-002": {"why": "A failed handshake means the peers could not agree on security parameters; mail may be retried over a weaker path.",
+                "effect": "Clients and servers share a supported, secure configuration."},
+    "TLS-003": {"why": "The negotiated suite relies on broken or deprecated primitives (e.g. RC4, DES/3DES, NULL, EXPORT, anonymous key exchange).",
+                "effect": "Traffic is protected by an AEAD cipher with authenticated, ephemeral key exchange."},
+    "TLS-004": {"why": "With static key exchange, anyone who later obtains the server's private key can decrypt previously recorded sessions.",
+                "effect": "Past sessions stay confidential even if the long-term key is later compromised."},
+    "TLS-005": {"why": "Small Diffie-Hellman groups and weak curves reduce the effort needed to recover session keys (Logjam class).",
+                "effect": "Key exchange strength matches the rest of the configuration."},
+    "TLS-006": {"why": "Offering insecure suites lets a misconfigured or malicious server select them.",
+                "effect": "Weak suites cannot be negotiated regardless of server configuration."},
+    "TLS-007": {"why": "CBC-mode suites without AEAD have a history of padding-oracle and timing attacks; RFC 9325 recommends AEAD suites.",
+                "effect": "Record protection uses authenticated encryption."},
+    "CERT-001": {"why": "Peers that validate certificates reject or warn about expired certificates; operators that ignore validation lose the protection it provides.",
+                 "effect": "Certificate validation succeeds without exceptions."},
+    "CERT-002": {"why": "A certificate used before its validity period usually indicates clock or issuance errors and fails validation.",
+                 "effect": "Certificate validation succeeds without exceptions."},
+    "CERT-003": {"why": "Short keys provide less cryptographic strength than current recommendations (NIST SP 800-57).",
+                 "effect": "Server authentication relies on a key size that meets current recommendations."},
+    "CERT-004": {"why": "Collision-prone hash functions (MD5, SHA-1) weaken the binding between the certificate and its signer.",
+                 "effect": "Certificate signatures use collision-resistant hashes."},
+    "CERT-005": {"why": "Peers cannot authenticate a self-signed certificate without out-of-band pinning, so an impostor certificate is indistinguishable.",
+                 "effect": "Peers can authenticate the server through a trusted issuer or DANE."},
+    "CERT-006": {"why": "Clients that verify hostnames will reject the connection; clients that do not verify cannot detect an impostor.",
+                 "effect": "Hostname verification succeeds for every name clients use."},
+    "CERT-007": {"why": "Peers may fail to build a valid path to a trust anchor, causing validation failures or insecure fallbacks.",
+                 "effect": "Peers can build the certificate path from the presented chain."},
+}
 
 _NAME_TO_CODE = {v: k for k, v in CIPHER_SUITE_NAMES.items()}
 DEPRECATED_VERSIONS = {"SSLv2": Severity.CRITICAL, "SSLv3": Severity.CRITICAL,
@@ -197,8 +245,11 @@ class SecurityPolicyEngine:
         tls_data: Optional[TLSSessionData],
         certs: List[CertificateDetails],
         session_context: Optional[Dict[str, Any]] = None,
+        profile=None,
     ) -> List[FindingResult]:
         """Run all policy checks against one reconstructed session."""
+        from securemailscope.policy import get_profile
+        profile = profile or get_profile(None)
         ctx = session_context or {}
         frames = ctx.get("evidence_frames", {})
         findings: List[FindingResult] = []
@@ -302,8 +353,14 @@ class SecurityPolicyEngine:
                                         "has_forward_secrecy": False},
                                        evidence_type="INFERRED", frames=[tf.get("server_hello", 0)]))
 
+            if info is not None and info.known and not info.aead and info.strength == "legacy"                     and version and version != "TLSv1.3":
+                findings.append(mk(session_id, "TLS-007",
+                                   f"Suite {info.name} protects records with {info.encryption} (no AEAD).",
+                                   {"cipher_suite": info.name, "encryption": info.encryption, "mac": info.mac},
+                                   frames=[tf.get("server_hello", 0)]))
+
             weak_kx = []
-            if tls_data.dh_prime_bits is not None and tls_data.dh_prime_bits < 2048:
+            if tls_data.dh_prime_bits is not None and tls_data.dh_prime_bits < profile.min_dh_bits:
                 weak_kx.append(f"{tls_data.dh_prime_bits}-bit DH group")
             if tls_data.key_exchange_group_weak:
                 weak_kx.append(f"weak curve {tls_data.key_exchange_group}")
@@ -343,7 +400,7 @@ class SecurityPolicyEngine:
                                    f"{cert.not_before.isoformat()} (evaluated at {ref}).",
                                    {**base_ev, "not_before": cert.not_before.isoformat(), "evaluated_at": ref},
                                    frames=cf, suffix=str(pos)))
-            if cert.weak_key:
+            if profile.weak_key(cert.public_key_algorithm, cert.public_key_size_bits):
                 findings.append(mk(session_id, "CERT-003",
                                    f"Certificate '{cert.subject}' uses a {cert.public_key_algorithm} key of "
                                    f"{cert.public_key_size_bits} bits.",
@@ -382,4 +439,24 @@ class SecurityPolicyEngine:
                                {"links": chain.get("links", [])}, confidence=0.9,
                                frames=[tls_data.evidence_frames.get("certificate", 0)] if tls_data else []))
 
-        return findings
+        return cls._apply_profile(findings, profile, tls_data)
+
+    OPTIONAL_RULES = frozenset({"TLS-007"})
+
+    @classmethod
+    def _apply_profile(cls, findings: List[FindingResult], profile, tls_data) -> List[FindingResult]:
+        """Apply the policy profile: drop disabled/optional rules, set profile severities."""
+        out = []
+        for f in findings:
+            if f.rule_id in profile.disabled_rules:
+                continue
+            if f.rule_id in cls.OPTIONAL_RULES and f.rule_id not in profile.enabled_optional_rules:
+                continue
+            if f.rule_id == "TLS-001":
+                version = f.evidence.get("negotiated_version")
+                f.severity = profile.deprecated_version_severity.get(version, f.severity)
+            else:
+                f.severity = profile.severity(f.rule_id, f.severity)
+            f.evidence.setdefault("policy_profile", profile.id)
+            out.append(f)
+        return out

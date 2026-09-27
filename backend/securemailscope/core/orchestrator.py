@@ -50,6 +50,7 @@ class EmailSessionResult:
     starttls: Any = None
     chain: Dict[str, Any] = field(default_factory=dict)
     evidence_frames: Dict[str, int] = field(default_factory=dict)
+    timeline: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def tls_observed(self) -> bool:
@@ -103,7 +104,10 @@ class Orchestrator:
     """End-to-End Analysis Orchestrator."""
 
     def __init__(self, securemailscope_version: str = "0.2.0", max_packets: int = 0,
-                 time_budget_seconds: float = 0.0, tcp_limits: Optional[TCPLimits] = None):
+                 time_budget_seconds: float = 0.0, tcp_limits: Optional[TCPLimits] = None,
+                 policy_profile: Optional[str] = None):
+        from securemailscope.policy import get_profile
+        self.profile = get_profile(policy_profile)
         self.version = securemailscope_version
         self.scorer = SecurityPostureScorer()
         self.max_packets = max_packets
@@ -149,6 +153,12 @@ class Orchestrator:
         anomaly_results, ml_summary = self._run_ml(email_sessions, capture_time)
         for s in email_sessions:
             s.anomaly = next((a for a in anomaly_results if a.session_id == s.session_id), None)
+            if s.anomaly is not None:
+                s.timeline.append({
+                    "ts": None, "frame": None, "session_id": s.session_id, "phase": "analysis", "type": "ml_assessment",
+                    "label": ("ML outlier (" + s.anomaly.anomaly_level.value + ") - requires investigation")
+                             if s.anomaly.is_anomaly else "ML assessment: consistent with the capture population",
+                    "evidence_class": "ML_ANOMALY" if s.anomaly.is_anomaly else "ML_ASSESSMENT"})
 
         # Phase 4: posture scoring from deterministic findings only.
         tls_observed = sum(1 for s in email_sessions if s.tls_data and s.tls_data.server_version)
@@ -180,6 +190,8 @@ class Orchestrator:
             "ml_anomalies_detected": sum(1 for a in anomaly_results if a.is_anomaly),
             "ml_engine_summary": ml_summary,
             "rule_policy_version": POLICY_VERSION,
+            "policy_profile": self.profile.id,
+            "policy_profile_detail": self.profile.to_dict(),
             "scoring_policy_version": posture.scoring_policy_version,
             "tool_version": self.version,
             "capture_start": capture_time.isoformat() if capture_time else None,
@@ -271,14 +283,69 @@ class Orchestrator:
         session_id = f"{session_prefix}{stream.stream_id}"
         findings = SecurityPolicyEngine.evaluate_session(
             session_id=session_id, protocol=det.protocol, starttls_state=final_state,
-            tls_data=tls_data, certs=certs, session_context=ctx)
+            tls_data=tls_data, certs=certs, session_context=ctx, profile=self.profile)
         for f in findings:
             f.session_id = f.session_id or session_id
 
         return EmailSessionResult(
             session_id=session_id, protocol=det.protocol, stream=stream, starttls_state=final_state,
             tls_data=tls_data, certificates=certs, findings=findings, detection=det,
-            implicit_tls=det.implicit_tls, starttls=st, chain=chain, evidence_frames=frames)
+            implicit_tls=det.implicit_tls, starttls=st, chain=chain, evidence_frames=frames,
+            timeline=self._session_timeline(stream, session_id, det, st, tls_data, certs, findings, frames))
+
+    @staticmethod
+    def _session_timeline(stream, session_id, det, st, tls, certs, findings, frames) -> List[Dict[str, Any]]:
+        """Events with real capture timestamps (frame -> timestamp from reassembled chunks)."""
+        frame_ts = {c.frame: c.timestamp for c in stream.chunks}
+        frame_ts.setdefault(stream.first_frame, stream.start_time)
+        frame_ts.setdefault(stream.last_frame, stream.end_time)
+        events: List[Dict[str, Any]] = []
+
+        def add(kind, label, frame=None, ts=None, cls="OBSERVED", **extra):
+            t = ts if ts is not None else frame_ts.get(frame)
+            events.append({"ts": t, "frame": frame or None, "session_id": session_id, "phase": "capture",
+                           "type": kind, "label": label, "evidence_class": cls, **extra})
+
+        add("tcp_open", "TCP connection opened (SYN observed)" if stream.syn_seen else
+            "First packet of connection observed (handshake not captured)", stream.first_frame, stream.start_time)
+        if stream.chunks:
+            first = stream.chunks[0]
+            add("protocol_identified", f"{det.protocol.name} identified ({det.detection_method})", first.frame,
+                cls="OBSERVED" if det.detection_method != "port_only" else "INFERRED")
+        ef = st.evidence_frames if st else {}
+        if "starttls_command" in ef:
+            add("starttls_command", "Client requested STARTTLS/STLS", ef["starttls_command"])
+        if "starttls_response" in ef:
+            add("starttls_response", f"Server replied: {st.starttls_response}", ef["starttls_response"])
+        if "plaintext_auth" in ef:
+            add("plaintext_auth", "Authentication attempted in plaintext (" +
+                ", ".join(st.plaintext_auth_mechanisms) + ")", ef["plaintext_auth"])
+        if tls:
+            tf = tls.evidence_frames
+            if "client_hello" in tf:
+                add("client_hello", f"ClientHello (max {tls.client_max_version or tls.client_version})", tf["client_hello"])
+            if "server_hello" in tf:
+                add("server_hello", f"ServerHello: {tls.server_version}, {tls.cipher_suite_name}", tf["server_hello"])
+            if "certificate" in tf:
+                add("certificate", f"Certificate message: {len(certs)} certificate(s) observed", tf["certificate"])
+            elif tls.certificate_visibility == "encrypted_tls13":
+                add("certificate", "Certificate not observable (encrypted by TLS 1.3)", tf.get("server_hello"),
+                    cls="NOT_OBSERVABLE")
+            for a in tls.alert_details:
+                if not a.get("encrypted"):
+                    add("tls_alert", f"TLS alert: {a.get('level')} {a.get('description')}", a.get("frame"))
+            if tls.handshake_status == "complete":
+                f = tf.get("application_data_c2s") or tf.get("application_data_s2c")
+                add("handshake_complete", "Encrypted application data exchanged (handshake complete)", f,
+                    cls="INFERRED")
+        add("tcp_close", "Connection closed (" + ("RST" if stream.rst_seen else "FIN" if stream.fin_seen else
+                                                  "end of capture") + ")", stream.last_frame, stream.end_time)
+        for f in findings:
+            fr = f.evidence_frames[0] if f.evidence_frames else None
+            add("finding", f"{f.rule_id} {f.title}", fr, ts=frame_ts.get(fr) if fr else stream.end_time,
+                cls=f.evidence_type, finding_id=f.finding_id, severity=f.severity.value)
+        events.sort(key=lambda e: (e["ts"] is None, e["ts"] or 0, e["frame"] or 0))
+        return events
 
     def _run_ml(self, sessions: List[EmailSessionResult], capture_time: Optional[datetime]):
         engine = AnomalyDetectionEngine(contamination="auto", min_training_sessions=MIN_ML_SESSIONS)

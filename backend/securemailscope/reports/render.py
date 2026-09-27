@@ -61,7 +61,11 @@ def render_pdf(doc: Dict[str, Any]) -> bytes:
                             topMargin=14 * mm, bottomMargin=14 * mm,
                             title="SecureMailScope Forensic Report", author="SecureMailScope")
     cap, post, ana = doc["capture"], doc["posture"], doc["analysis"]
+    mode = (doc.get("redaction") or {}).get("mode", "RAW")
+    profile = (ana.get("policy_profile_detail") or {}).get("name") or ana.get("policy_profile", "balanced")
     story = [P("SecureMailScope - Email Cryptographic Posture Report", "Title"),
+             P(f"Report mode: {mode} | Policy profile: {profile} | Passive analysis of a stored capture; "
+               f"no traffic generated, nothing decrypted.", "Small"),
              P(f"Capture: {cap.get('filename')}"), P(f"SHA-256: {cap.get('sha256')}", "Small"),
              P(f"Analyzed: {ana.get('analyzed_at')} | rule policy {ana.get('rule_policy_version')} | "
                f"scoring policy {ana.get('scoring_policy_version')} | tool {doc['tool'].get('version')}", "Small"),
@@ -90,12 +94,25 @@ def render_pdf(doc: Dict[str, Any]) -> bytes:
     def add(x):
         story.extend(x) if isinstance(x, list) else story.append(x)
 
+    if mode == "REDACTED":
+        story.append(P((doc.get("redaction") or {}).get("note", ""), "Small"))
     story.append(P("2. Capture metadata", "Heading2"))
     add(table([["Property", "Value"]] + [[k, v] for k, v in cap.items()], [45 * mm, 135 * mm]))
     story.append(P("3. Posture by dimension", "Heading2"))
     add(table([["Dimension", "Score", "Findings", "Coverage %", "Evidence"]] + [
         [d["name"], "n/a" if d["score"] is None else f"{d['score']:.0f}", d["findings_count"],
          d["coverage_percent"], d["evidence_quality"]] for d in post.get("dimensions", [])]))
+    story.append(P("3a. Protocol and TLS summary", "Heading2"))
+    add(table([["Protocol", "Sessions", "Implicit TLS", "STARTTLS to TLS", "Rejected", "Plaintext", "TLS failed"]] + [
+        [k, v["sessions"], v["implicit_tls"], v["starttls_established"], v["starttls_rejected"], v["plaintext"],
+         v["tls_failed"]] for k, v in (doc.get("protocol_summary") or {}).items()]))
+    ts = doc.get("tls_summary") or {}
+    add(table([["TLS property", "Observed values"]] + [
+        ["Negotiated versions", "; ".join(f"{k}: {v}" for k, v in (ts.get("versions") or {}).items())],
+        ["Cipher suites", "; ".join(f"{k}: {v}" for k, v in (ts.get("cipher_suites") or {}).items())],
+        ["Key exchange", "; ".join(f"{k}: {v}" for k, v in (ts.get("key_exchange") or {}).items())],
+        ["Forward secrecy", "; ".join(f"{k}: {v}" for k, v in (ts.get("forward_secrecy") or {}).items())]],
+        [45 * mm, 135 * mm]))
     story.append(P("4. Prioritised remediation", "Heading2"))
     add(table([["#", "Rule", "Severity", "Sessions", "Recommendation"]] + [
         [r["priority"], f"{r['rule_id']} {r['title']}", r["severity"], r["affected_sessions"], r["recommendation"]]
@@ -129,6 +146,12 @@ def render_pdf(doc: Dict[str, Any]) -> bytes:
     story.append(P("9. Method and limitations", "Heading2"))
     for line in doc["limitations"]:
         story.append(P(f"- {line}", "Small"))
+    story.append(P("10. Integrity", "Heading2"))
+    add(table([["Item", "Value"], ["Capture SHA-256", cap.get("sha256")], ["Analysis timestamp", ana.get("analyzed_at")],
+               ["Tool version", f"SecureMailScope {doc['tool'].get('version')}"],
+               ["Policy profile", ana.get("policy_profile")], ["Report mode", mode]], [45 * mm, 135 * mm]))
+    story.append(P("SecureMailScope is an independent academic project (SIH 2026, SIH26159); it is not affiliated "
+                   "with or endorsed by any government agency.", "Small"))
     pdf.build(story)
     return buf.getvalue()
 

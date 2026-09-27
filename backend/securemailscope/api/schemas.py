@@ -48,16 +48,18 @@ class CaptureSummary(_ORM):
     tls_session_count: int
     posture_score: Optional[float]
     posture_status: Optional[str]
+    policy_profile: Optional[str] = "balanced"
+    capture_start: Optional[datetime] = None
+    analysis_timestamp: Optional[datetime] = None
     findings_count: int = 0
     anomalies_count: int = 0
+    severity_counts: Dict[str, int] = {}
 
 
 class CaptureDetail(CaptureSummary):
     file_size: int
     file_format: Optional[str]
-    analysis_timestamp: Optional[datetime]
     analysis_duration_seconds: Optional[float]
-    capture_start: Optional[datetime]
     capture_end: Optional[datetime]
     scoring_policy_version: Optional[str]
     rule_policy_version: Optional[str]
@@ -67,7 +69,6 @@ class CaptureDetail(CaptureSummary):
     sessions_count: int = 0
     certificates_count: int = 0
     reports_count: int = 0
-    severity_counts: Dict[str, int] = {}
     coverage: Dict[str, Any] = {}
     ingestion: Dict[str, Any] = {}
 
@@ -141,6 +142,8 @@ class FindingDetail(FindingSummary):
     evidence_frames: List[int] = []
     timestamp: Optional[datetime]
     affected_sessions: List[str] = []
+    why_it_matters: Optional[str] = None
+    expected_effect: Optional[str] = None
 
 
 class FindingStatusUpdate(BaseModel):
@@ -257,4 +260,5 @@ class ReportSummary(_ORM):
     report_type: str
     file_size: int
     sha256: Optional[str]
+    redacted: bool = False
     created_at: Optional[datetime]
