@@ -1,5 +1,5 @@
 """
-Scoring Configuration for M9: Cryptographic Security Posture Scoring.
+Scoring configuration: Cryptographic Security Posture Scoring.
 
 This module defines the policy version, dimension weights, severity mappings,
 and scoring bands used by the SecureMailScope scoring engine.
@@ -53,7 +53,7 @@ class DimensionConfig:
     name: str
     weight: float  # Weight relative to other dimensions (sum to ~1.0 or normalize)
     description: str
-    rules: List[str] = field(default_factory=list)  # M8 rule IDs that belong to this dimension
+    rules: List[str] = field(default_factory=list)  # rule IDs that belong to this dimension
 
 
 # Scoring dimensions. Rule membership is derived from the rule catalogue so that

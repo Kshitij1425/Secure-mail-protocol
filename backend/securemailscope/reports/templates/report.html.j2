@@ -149,5 +149,12 @@ SecureMailScope {{ doc.tool.version }}</p>
 <tr><td>ML model</td><td>{{ a.ml_model_version or "n/a" }}</td></tr>
 <tr><td>Report mode</td><td>{{ red.mode }}</td></tr>
 </table>
+{% if doc.analyst_annotations %}
+<h2><span>A</span>Appendix: analyst notes and selected items</h2>
+<div class="note">Analyst metadata selected for this report. It is not evidence and does not change findings or the score. In redacted reports, addresses, host names and e-mail addresses in notes are pseudonymised; review free text before sharing.</div>
+<table><tr><th>Item</th><th>Type</th><th>Note</th><th>Added (UTC)</th></tr>
+{% for n in doc.analyst_annotations %}<tr><td>{{ n.target }}</td><td>{{ n.target_type }}</td><td>{{ n.note or "(selected without note)" }}</td><td>{{ n.created_at or "" }}</td></tr>{% endfor %}
+</table>
+{% endif %}
 <footer>SecureMailScope is an independent academic project (Smart India Hackathon 2026, SIH26159). It is not affiliated with or endorsed by any government agency. Offline document: no external resources are loaded.</footer>
 </div></body></html>

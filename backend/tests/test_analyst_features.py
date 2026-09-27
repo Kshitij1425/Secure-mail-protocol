@@ -245,3 +245,104 @@ def test_redacted_download_names_do_not_reveal_capture_filename(client):
     assert "real_remediation_before" not in cd and "_redacted" in cd, cd
     raw = client.get(f"/captures/{cid}/bundle").headers["content-disposition"]
     assert "real_remediation_before" in raw
+
+
+# ------------------------------------------------------------------ annotations (notes / report selection)
+def test_annotations_validate_targets_and_persist(client):
+    cid = up(client, "real_remediation_before.pcap")
+    f = client.get(f"/captures/{cid}/findings").json()[0]
+    s = client.get(f"/captures/{cid}/sessions").json()[0]
+    fp = client.get(f"/captures/{cid}/certificate-inventory").json()[0]["fingerprint_sha256"]
+    for ttype, tid in (("capture", cid), ("finding", f["finding_id"]), ("session", s["session_id"]),
+                       ("certificate", fp)):
+        r = client.post(f"/captures/{cid}/annotations", json={"target_type": ttype, "target_id": tid, "text": f"note {ttype}"})
+        assert r.status_code == 201, r.text
+    assert client.post(f"/captures/{cid}/annotations",
+                       json={"target_type": "finding", "target_id": "nope", "text": "x"}).status_code == 422
+    assert client.post(f"/captures/{cid}/annotations",
+                       json={"target_type": "bogus", "target_id": cid, "text": "x"}).status_code == 422
+    assert client.post(f"/captures/{cid}/annotations",
+                       json={"target_type": "capture", "target_id": cid, "text": "   "}).status_code == 422
+    assert client.post(f"/captures/{cid}/annotations",
+                       json={"target_type": "capture", "target_id": cid, "text": "x" * 4001}).status_code == 422
+    notes = client.get(f"/captures/{cid}/annotations").json()
+    assert len(notes) == 4
+    only = client.get(f"/captures/{cid}/annotations", params={"target_type": "finding"}).json()
+    assert [n["target_id"] for n in only] == [f["finding_id"]]
+    nid = notes[0]["id"]
+    assert client.patch(f"/annotations/{nid}", json={"include_in_report": True}).json()["include_in_report"] is True
+    assert client.delete(f"/annotations/{nid}").status_code == 204
+    assert client.delete(f"/annotations/{nid}").status_code == 404
+    # analyst metadata never changes findings or the score
+    before = client.get(f"/captures/{cid}").json()["posture_score"]
+    assert client.get(f"/captures/{cid}").json()["posture_score"] == before
+
+
+def test_selected_annotations_appear_in_reports_and_are_redacted(client):
+    cid = up(client, "real_remediation_before.pcap")
+    f = client.get(f"/captures/{cid}/findings").json()[0]
+    client.post(f"/captures/{cid}/annotations", json={"target_type": "finding", "target_id": f["finding_id"],
+                "text": "Owner confirmed relay 10.77.0.50 is scheduled for replacement", "include_in_report": True})
+    client.post(f"/captures/{cid}/annotations", json={"target_type": "capture", "target_id": cid,
+                "text": "internal only - not selected"})
+    outs = {}
+    for fmt in ("json", "html"):
+        for redact in (False, True):
+            rep = client.post(f"/captures/{cid}/reports", params={"format": fmt, "redact": redact}).json()
+            outs[(fmt, redact)] = client.get(f"/reports/{rep['report_id']}/download").text
+    assert "scheduled for replacement" in outs[("html", False)] and "Appendix" in outs[("html", False)]
+    assert "internal only" not in outs[("html", False)] and "internal only" not in outs[("json", False)]
+    doc = json.loads(outs[("json", False)])
+    assert doc["analyst_annotations"][0]["target"].startswith(f["rule_id"])
+    for fmt in ("json", "html"):
+        assert "10.77.0.50" in outs[(fmt, False)]
+        assert "10.77.0.50" not in outs[(fmt, True)] and "scheduled for replacement" in outs[(fmt, True)]
+    # without selections the report has no appendix
+    cid2 = up(client, "real_remediation_after.pcap")
+    rep = client.post(f"/captures/{cid2}/reports", params={"format": "json"}).json()
+    assert "analyst_annotations" not in json.loads(client.get(f"/reports/{rep['report_id']}/download").text)
+
+
+def test_pdf_report_has_the_same_14_sections_and_appendix(client):
+    pypdf = pytest.importorskip("pypdf")
+    cid = up(client, "real_remediation_before.pcap")
+    client.post(f"/captures/{cid}/annotations", json={"target_type": "capture", "target_id": cid,
+                "text": "Selected for the report", "include_in_report": True})
+    rep = client.post(f"/captures/{cid}/reports", params={"format": "pdf"}).json()
+    data = client.get(f"/reports/{rep['report_id']}/download").content
+    text = " ".join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(data)).pages)
+    heads = ["1. Executive summary", "2. Capture metadata", "3. Security posture", "4. Protocol summary",
+             "5. TLS summary", "6. Certificate summary", "7. Findings", "8. Affected sessions", "9. Anomalies",
+             "10. Evidence timeline", "11. Recommendations", "12. Methodology", "13. Limitations", "14. Integrity",
+             "Appendix A"]
+    pos = [text.find(h) for h in heads]
+    assert all(p >= 0 for p in pos), dict(zip(heads, pos))
+    assert pos == sorted(pos)
+
+
+# ------------------------------------------------------------------ posture trend
+def test_trend_links_analyses_that_share_a_server(client):
+    before = up(client, "real_remediation_before.pcap")
+    after = up(client, "real_remediation_after.pcap")
+    other = up(client, "real_imaps_tls13.pcap")
+    trend = client.get(f"/captures/{after}/trend").json()
+    ids = [t["capture_id"] for t in trend]
+    assert set(ids) == {before, after} and other not in ids
+    assert ids.index(before) < ids.index(after)  # ordered by capture time
+    by = {t["capture_id"]: t for t in trend}
+    assert by[after]["is_selected"] and by[before]["shared_servers"] == ["SMTP 10.77.0.50:587"]
+    assert by[before]["severe_findings_count"] > by[after]["severe_findings_count"] == 0
+    assert by[before]["posture_score"] < by[after]["posture_score"]
+    assert client.get("/captures/does-not-exist/trend").status_code == 404
+
+
+def test_hostile_note_text_is_escaped_in_reports(client):
+    cid = up(client, "real_remediation_after.pcap")
+    payload = '<script>alert(1)</script><img src=x onerror=alert(2)>'
+    client.post(f"/captures/{cid}/annotations", json={"target_type": "capture", "target_id": cid,
+                "text": payload, "include_in_report": True})
+    rep = client.post(f"/captures/{cid}/reports", params={"format": "html"}).json()
+    html = client.get(f"/reports/{rep['report_id']}/download").text
+    assert payload not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    rep = client.post(f"/captures/{cid}/reports", params={"format": "pdf"}).json()
+    assert client.get(f"/reports/{rep['report_id']}/download").content.startswith(b"%PDF")

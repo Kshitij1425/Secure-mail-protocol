@@ -1,5 +1,5 @@
 import type React from 'react';
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { CaptureProvider } from './context/CaptureContext';
 import { Shell } from './components/Shell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -9,7 +9,8 @@ import { CapturesPage } from './pages/CapturesPage';
 import { FindingsPage } from './pages/FindingsPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { CertificatesPage } from './pages/CertificatesPage';
-import { TimelinePage } from './pages/TimelinePage';
+import { EvidencePage } from './pages/EvidencePage';
+import { AboutPage } from './pages/AboutPage';
 import { AnomaliesPage } from './pages/AnomaliesPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { UploadPage } from './pages/UploadPage';
@@ -18,7 +19,8 @@ import { ComparePage } from './pages/ComparePage';
 const NotFound = () => (
   <div className="py-16 text-center space-y-2">
     <h1 className="text-xl">Page not found</h1>
-    <Link to="/" className="link">Go to the overview</Link>
+    <p className="text-sm text-ink-2">This address is not part of SecureMailScope.</p>
+    <Link to="/captures" className="link">Go to step 1: Capture</Link>
   </div>
 );
 
@@ -41,7 +43,9 @@ function App() {
             <Route path="/findings" element={<FindingsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
-            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/evidence" element={<EvidencePage />} />
+            <Route path="/timeline" element={<Navigate to="/evidence?view=timeline" replace />} />
+            <Route path="/about" element={<AboutPage />} />
             <Route path="/anomalies" element={<AnomaliesPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/compare" element={<ComparePage />} />

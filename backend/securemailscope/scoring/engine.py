@@ -1,7 +1,7 @@
 """
-Security Posture Scoring Engine for M9.
+Security posture scoring engine.
 
-Consumes findings from M8 and produces a comprehensive security posture score.
+Consumes deterministic rule findings and produces a comprehensive security posture score.
 
 Scoring model:
   - Start at 100
@@ -41,7 +41,7 @@ class RootCauseGroup:
 
 class SecurityPostureScorer:
     """
-    M9 Security Posture Scoring Engine.
+    Security posture scoring engine.
 
     Implements evidence-based cryptographic security posture scoring
     with proper prevalence handling and root-cause aggregation.
@@ -69,10 +69,10 @@ class SecurityPostureScorer:
                          securemailscope_version: str,
                          coverage: Optional[Dict[str, int]] = None) -> PostureScore:
         """
-        Calculate security posture from M8 findings.
+        Calculate security posture from rule findings.
 
         Args:
-            findings: List of findings from M8
+            findings: List of rule findings
             tls_session_count: Total TLS sessions analyzed
             protocol_session_count: Total sessions analyzed (including non-TLS)
             securemailscope_version: Version string of SecureMailScope

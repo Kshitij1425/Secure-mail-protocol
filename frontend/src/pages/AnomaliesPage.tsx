@@ -4,7 +4,7 @@ import { useCapture } from '../context/CaptureContext';
 import { getAnomaly, getCapture, getCaptureAnomalies } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import { Breadcrumbs, Drawer, EvidenceTag, KV, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { Breadcrumbs, Disclosure, Drawer, EvidenceTag, KV, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
 import { shortSession } from '../lib/format';
 
 const FEATURE_LABEL: Record<string, string> = {
@@ -41,48 +41,63 @@ export const AnomaliesPage = () => {
     <>
       <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' }, { label: 'Anomalies' }]} />
       <PageTitle title="ML anomalies"
-        lead="An unsupervised Isolation Forest is fitted on this capture's own TLS sessions. Only sessions that are cryptographically weaker than this capture's norm, and rare here, are reported. These are investigation leads, not findings." />
-      <div className="notice">
-        <strong>Rule-based findings and ML anomalies are separate.</strong> An outlier is a session whose TLS and certificate
-        features are weaker than, and unusual relative to, the rest of this capture. A weakness shared by most sessions is not an outlier (the rules still report it). It requires investigation; it is not a confirmed vulnerability or compromise,
-        and it never changes findings or the posture score. Model status: <span className="font-mono">{ml ?? 'unknown'}</span>.
+        lead="Supplementary analysis: sessions whose security configuration is weaker than, and unusual relative to, the rest of this capture. Requires investigation." />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div className="border border-line bg-panel rounded p-3">
+          <div className="font-semibold">Deterministic finding <span className="font-normal text-ink-3">(Findings, step 4)</span></div>
+          <p className="mt-1 text-ink-2">A defined security rule was triggered by observed values. Findings determine the posture score and are the primary security assessment.</p>
+        </div>
+        <div className="border border-ml/60 bg-panel rounded p-3">
+          <div className="font-semibold">ML anomaly <EvidenceTag value="ML_ANOMALY" /></div>
+          <p className="mt-1 text-ink-2">Anomalous security configuration: this session differs from the capture's normal security pattern and is weaker on at least one feature. It is not an attack, compromise or malicious-session verdict and never changes findings or the score.</p>
+        </div>
       </div>
+      <Disclosure summary="How the ML stage works and its limitations">
+        <p><strong>Model:</strong> unsupervised Isolation Forest ({ml ?? 'status unknown'}) that ranks sessions weaker than the capture's norm; evaluated on labelled lab sessions; supplementary to deterministic rules.</p>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>Evaluated only on lab-generated labelled sessions; no real-world accuracy is claimed.</li>
+          <li>Uncommon but healthy configurations (TLS 1.3, ECDSA, stronger keys) are not penalised.</li>
+          <li>A weakness shared by most sessions defines the norm and is not reported here; the rules still report it.</li>
+          <li>Needs at least 5 TLS sessions with an observed version. Not-observable values (e.g. TLS 1.3 certificates) are treated as neutral.</li>
+        </ul>
+        <p><Link to="/about#findings-vs-ml" className="link">Methodology</Link></p>
+      </Disclosure>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show every evaluated session, not only outliers</label>
 
       <div className={`grid gap-5 ${d ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)]' : 'grid-cols-1'}`}>
         <Panel title={`${rows.length} session(s)`} bodyClass="overflow-x-auto">
           <StateBlock loading={list.loading} error={list.error} onRetry={list.reload} empty={!list.loading && rows.length === 0}
             emptyText={ml?.startsWith('insufficient') ? 'Too few TLS sessions in this capture for anomaly detection (5 or more are required).'
-              : list.data?.length ? 'No session was flagged as an outlier.' : 'No sessions were evaluated by the ML stage.'}>
+              : list.data?.length ? 'No session is weaker than, and unusual relative to, this capture baseline.' : 'No sessions were evaluated by the ML stage.'}>
             <table className="tbl">
               <thead><tr><th>Session</th><th>Result</th><th className="num">Score</th></tr></thead>
               <tbody>
                 {rows.map((a) => (
                   <tr key={a.id} className="row-link" aria-selected={selectedId === String(a.id)} onClick={() => open(a.id)}>
                     <td><button type="button" className="link font-mono text-xs text-left" onClick={(e) => { e.stopPropagation(); open(a.id); }}>{shortSession(a.session_id)}</button></td>
-                    <td>{a.is_anomaly ? <span className="text-ml font-medium">Outlier ({a.anomaly_level}): requires investigation</span> : 'Consistent with population'}</td>
+                    <td>{a.is_anomaly ? <span className="text-ml font-medium">Anomalous security configuration ({a.anomaly_level}): requires investigation</span> : 'Consistent with the capture baseline'}</td>
                     <td className="num">{a.anomaly_score?.toFixed(3)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-ink-3 px-3 py-2">Score: positive means consistent with the population, negative means outlier (normalised Isolation Forest decision value).</p>
+            <p className="text-xs text-ink-3 px-3 py-2">Score: positive means consistent with the capture baseline, negative means unusual (normalised Isolation Forest decision value; more negative sessions are weaker on more features).</p>
           </StateBlock>
         </Panel>
 
         {valid && (
-          <Drawer title="Isolation Forest assessment" subtitle={d ? shortSession(d.session_id) : valid} onClose={close}>
+          <Drawer title="ML assessment (supplementary)" subtitle={d ? shortSession(d.session_id) : valid} onClose={close}>
             <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload}>
               {d && <>
                 <KV rows={[
                   { k: 'Classification', v: <><EvidenceTag value={d.is_anomaly ? 'ML_ANOMALY' : 'ML_ASSESSMENT'} /> {d.classification}</> },
-                  { k: 'Result', v: d.is_anomaly ? `Outlier, ${d.anomaly_level}` : 'Consistent with the capture population' },
+                  { k: 'Result', v: d.is_anomaly ? `Anomalous security configuration (${d.anomaly_level}); requires investigation` : 'Consistent with the capture baseline' },
                   { k: 'Score', v: d.anomaly_score },
                   { k: 'Model', v: d.model_version },
                   { k: 'TLS session', v: <Link className="link font-mono text-xs break-all" to={`/sessions?id=${encodeURIComponent(d.session_id)}`}>{shortSession(d.session_id)}</Link> },
                 ]} />
                 <section className="space-y-1.5">
-                  <h3 className="text-sm font-semibold">Why this session was assessed this way</h3>
+                  <h3 className="text-sm font-semibold">Why this session was assessed this way (model explanation)</h3>
                   <p className="text-sm">{d.explanation}</p>
                 </section>
                 <section className="space-y-1.5">

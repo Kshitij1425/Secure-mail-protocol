@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useCapture } from '../context/CaptureContext';
-import { getCertificateInventory } from '../lib/api';
+import { getCaptureFindings, getCertificateInventory } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
+import { AnalystNotes } from '../components/AnalystNotes';
 import { fmtUtc, shortSession } from '../lib/format';
 import type { CertificateInventoryItem } from '../types/api';
 
@@ -25,11 +26,13 @@ export const CertificatesPage = () => {
   const { selectedId, open, close } = useDetailPanel();
   const [filter, setFilter] = useState('all');
   const inv = useAsync(() => getCertificateInventory(activeCaptureId!), activeCaptureId);
+  const findings = useAsync(() => getCaptureFindings(activeCaptureId!), activeCaptureId);
 
   const rows = useMemo(() => (inv.data ?? []).filter((c) =>
     filter === 'all' || (filter === 'issues' && (c.is_expired || c.is_not_yet_valid || c.weak_key || c.weak_signature || c.is_self_signed))
     || (filter === 'leaf' && c.chain_positions.includes(0))), [inv.data, filter]);
   const sel = (inv.data ?? []).find((c) => c.fingerprint_sha256 === selectedId || c.certificate_ids.includes(selectedId ?? ''));
+  const related = (findings.data ?? []).filter((f) => !!f.session_id && !!sel?.session_ids.includes(f.session_id) && f.rule_id.startsWith('CERT-'));
 
   if (!activeCaptureId) return <NeedCapture />;
   return (
@@ -102,6 +105,20 @@ export const CertificatesPage = () => {
               ]} />
               <ul className="space-y-1">{sel.session_ids.map((s) => <li key={s}><Link className="link font-mono text-xs break-all" to={`/sessions?id=${encodeURIComponent(s)}`}>{shortSession(s)}</Link></li>)}</ul>
             </section>
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Certificate findings on these sessions ({related.length})</h3>
+              <StateBlock loading={findings.loading} error={findings.error}>
+                {related.length ? (
+                  <ul className="space-y-1.5">{related.map((f) => (
+                    <li key={f.finding_id} className="flex flex-wrap items-center gap-2 text-sm">
+                      <Severity value={f.severity} compact /><Link className="link" to={`/findings?id=${encodeURIComponent(f.finding_id)}`}>{f.title}</Link>
+                      <span className="font-mono text-xs text-ink-3">{f.rule_id}</span>
+                    </li>))}
+                  </ul>
+                ) : <p className="text-sm text-ink-2">No certificate rule was triggered on these sessions.</p>}
+              </StateBlock>
+            </section>
+            <AnalystNotes captureId={activeCaptureId} targetType="certificate" targetId={sel.fingerprint_sha256} />
           </Drawer>
         )}
       </div>

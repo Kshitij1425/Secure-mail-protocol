@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCapture } from '../context/CaptureContext';
-import { bundleUrl, createReport, download, errorMessage, getReports, reportDownloadUrl, stixUrl } from '../lib/api';
+import { bundleUrl, createReport, download, errorMessage, getAnnotations, getReports, reportDownloadUrl, stixUrl } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { Breadcrumbs, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
 import { fmtUtc } from '../lib/format';
@@ -11,6 +11,8 @@ export const ReportsPage = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const reports = useAsync(() => getReports(activeCaptureId!), activeCaptureId);
+  const notes = useAsync(() => getAnnotations(activeCaptureId!), activeCaptureId);
+  const selected = (notes.data ?? []).filter((n) => n.include_in_report).length;
   if (!activeCaptureId) return <NeedCapture />;
   const ready = activeCapture?.analysis_status === 'completed';
 
@@ -30,8 +32,8 @@ export const ReportsPage = () => {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' }, { label: 'Reports and export' }]} />
-      <PageTitle title="Reports and export" lead="Every output is generated from the stored analysis and records the capture SHA-256, analysis time, tool version and policy profile." />
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' }, { label: 'Report' }]} />
+      <PageTitle title="Report and export" lead="Every output is generated from the stored analysis and records the capture SHA-256, analysis time, tool version and policy profile." />
 
       <Panel title="Output mode">
         <fieldset className="space-y-2 text-sm">
@@ -46,7 +48,10 @@ export const ReportsPage = () => {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <Panel title="Forensic report">
-          <p className="text-sm text-ink-2 mb-3">Fourteen sections from executive summary to integrity information. JSON is the canonical machine-readable document; HTML and PDF are rendered from it.</p>
+          <p className="text-sm text-ink-2 mb-3">Fourteen sections from executive summary to integrity information, identical in JSON, HTML and PDF. JSON is the canonical machine-readable document.</p>
+          <p className="text-sm mb-3">{notes.loading ? 'Checking analyst selections' : selected
+            ? <>Appendix A will contain <strong>{selected}</strong> item(s) you selected for the investigation report.</>
+            : <>No items are selected for the report appendix. Use "Include in investigation report" in a finding, session or certificate, or on the Posture page.</>}</p>
           <div className="flex flex-wrap gap-2">
             {(['pdf', 'html', 'json'] as const).map((f) => (
               <button key={f} type="button" className={f === 'pdf' ? 'btn-primary' : 'btn'} disabled={!ready || busy !== null} onClick={() => void make(f)}>

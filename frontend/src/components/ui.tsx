@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ChevronRight, Inbox, Loader2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronRight, Inbox, Info, Loader2, OctagonAlert, X } from 'lucide-react';
 
 /* ---------------------------------------------------------------- severity */
 const SEV_SWATCH: Record<string, string> = {
@@ -113,23 +114,94 @@ export const StateBlock = ({ loading, error, empty, emptyText = 'Nothing to show
   return <>{children}</>;
 };
 
-/** Right-hand detail drawer: stays in the page flow on wide screens, overlays on narrow ones. */
+/**
+ * Right-hand detail drawer: in the page flow beside the table on wide screens, below it on narrow
+ * ones. On open it takes focus (so keyboard and screen-reader users land in it) and, when stacked
+ * below the table, scrolls into view. Escape closes it (see useDetailPanel).
+ */
 export const Drawer = ({ title, subtitle, onClose, children }: {
   title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode;
-}) => (
-  <aside aria-label="Details" className="panel self-start lg:sticky lg:top-4 max-h-[calc(100vh-7rem)] overflow-y-auto">
-    <div className="panel-head sticky top-0 z-10">
-      <div className="min-w-0">
-        <h2 className="panel-title break-words">{title}</h2>
-        {subtitle && <div className="text-xs text-ink-3 font-mono break-all mt-0.5">{subtitle}</div>}
+}) => {
+  const ref = useRef<HTMLElement>(null);
+  const key = typeof subtitle === 'string' ? subtitle : typeof title === 'string' ? title : '';
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    if (window.innerWidth < 1280) el.scrollIntoView({ block: 'start', behavior: 'auto' });
+  }, [key]);
+  return (
+    <aside ref={ref} tabIndex={-1} aria-label="Details" className="panel self-start lg:sticky lg:top-4 max-h-none xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-signal">
+      <div className="panel-head sticky top-0 z-10">
+        <div className="min-w-0">
+          <h2 className="panel-title break-words">{title}</h2>
+          {subtitle && <div className="text-xs text-ink-3 font-mono break-all mt-0.5">{subtitle}</div>}
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close details (Esc)" title="Close (Esc)" className="p-1.5 rounded hover:bg-line/60 text-ink-2"><X size={16} aria-hidden="true" /></button>
       </div>
-      <button type="button" onClick={onClose} aria-label="Close details" className="p-1 rounded hover:bg-line/60 text-ink-2"><X size={16} /></button>
-    </div>
-    <div className="panel-body space-y-5">{children}</div>
-  </aside>
-);
+      <div className="panel-body space-y-5">{children}</div>
+    </aside>
+  );
+};
 
 export const NeedCapture = () => (
   <StateBlock empty emptyText="No analysis selected. Open one from Captures or analyse a new capture."
-    emptyAction={<div className="flex gap-2"><Link to="/captures" className="btn">Open captures</Link><Link to="/upload" className="btn-primary">Analyse a capture</Link></div>} />
+    emptyAction={<div className="flex gap-2"><Link to="/captures" className="btn">Open captures</Link><Link to="/upload" className="btn-primary">Analyze a capture</Link></div>} />
+);
+
+/* ---------------------------------------------------------------- alerts */
+const ALERT = {
+  info: { icon: Info, cls: 'border-signal bg-signal-soft', role: 'note' },
+  warn: { icon: AlertTriangle, cls: 'border-warn bg-warn/10', role: 'note' },
+  error: { icon: OctagonAlert, cls: 'border-sev-high bg-sev-low/15', role: 'alert' },
+  ok: { icon: CheckCircle2, cls: 'border-ok bg-ok/10', role: 'status' },
+} as const;
+/** Inline message with an icon and text label; tone is never conveyed by colour alone. */
+export const Alert = ({ tone = 'info', title, children }: { tone?: keyof typeof ALERT; title?: ReactNode; children?: ReactNode }) => {
+  const a = ALERT[tone];
+  const Icon = a.icon;
+  return (
+    <div role={a.role} className={`border-l-4 ${a.cls} px-3 py-2 text-sm text-ink flex gap-2.5`}>
+      <Icon size={16} aria-hidden="true" className="shrink-0 mt-0.5" />
+      <div className="min-w-0 space-y-1">{title && <div className="font-semibold">{title}</div>}{children}</div>
+    </div>
+  );
+};
+
+/* ---------------------------------------------------------------- tabs */
+/** WAI-ARIA tabs: arrow keys move between tabs, Home/End jump; the active tab owns the panel. */
+export const Tabs = ({ tabs, value, onChange, label }: {
+  tabs: { id: string; label: ReactNode }[]; value: string; onChange: (id: string) => void; label: string;
+}) => {
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === value);
+    const next = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length
+      : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    onChange(tabs[next].id);
+    (e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
+  };
+  return (
+    <div role="tablist" aria-label={label} onKeyDown={onKey} className="flex flex-wrap border-b border-line-strong gap-1">
+      {tabs.map((t) => (
+        <button key={t.id} type="button" role="tab" id={`tab-${t.id}`} aria-selected={value === t.id} aria-controls={`panel-${t.id}`}
+          tabIndex={value === t.id ? 0 : -1} onClick={() => onChange(t.id)}
+          className={`px-3 py-2 text-sm -mb-px border-b-2 ${value === t.id ? 'border-signal text-ink font-semibold' : 'border-transparent text-ink-2 hover:text-ink hover:border-line-strong'}`}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+export const TabPanel = ({ id, children }: { id: string; children: ReactNode }) => (
+  <div role="tabpanel" id={`panel-${id}`} aria-labelledby={`tab-${id}`} className="space-y-5">{children}</div>
+);
+
+/* ---------------------------------------------------------------- disclosure (accordion item) */
+export const Disclosure = ({ summary, children, open = false }: { summary: ReactNode; children: ReactNode; open?: boolean }) => (
+  <details className="disclosure" open={open}>
+    <summary>{summary}</summary>
+    <div className="disclosure-body">{children}</div>
+  </details>
 );

@@ -1,8 +1,8 @@
 """
-M11: ML Anomaly Detection
+ML anomaly detection (supplementary)
 
 Unsupervised anomaly detection layer for identifying unusual TLS session patterns.
-Built on Isolation Forest, non-blocking to deterministic M8 security rules.
+Built on Isolation Forest, never changes the deterministic rule findings.
 """
 from securemailscope.ml.feature_extractor import (
     FeatureExtractor,

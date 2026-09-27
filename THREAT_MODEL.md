@@ -47,6 +47,9 @@ hand an analyst a file) controls every byte the analyzer parses.
 | T18 | Tampering with evidence bundles | Deterministic ZIP with per-file SHA-256 manifest and `manifest.sha256` | `test_analyst_features.py` bundle test |
 | T19 | Re-analysis of a substituted file | Stored file hash re-verified before re-analysis | `test_analyst_features.py` reanalyze test |
 | T20 | Invalid ids / policies on new endpoints (compare, chain, timeline, bundle, stix, reanalyze) | Typed parameters, 404 for unknown ids, 422 for unknown policy / equal compare ids / non-boolean `redact` | API tests; manual probes with traversal-style ids |
+| T22 | Stored XSS / injection via analyst notes (free text) | React text rendering; Jinja2 autoescape in HTML reports; ReportLab escaping in PDF; 4000-character limit; notes must target an item of the same analysis | `test_hostile_note_text_is_escaped_in_reports`, `test_annotations_validate_targets_and_persist` |
+| T23 | Identifying data in notes leaking through redacted reports | Notes are redacted with the rest of the document (addresses, host names, e-mail); other free text is documented as not redacted; only notes selected for the report are included | `test_selected_annotations_appear_in_reports_and_are_redacted` |
+| T24 | Blocked or broken methods through a wrong CORS policy | Allow-list origins; every method the dashboard uses is allowed, foreign origins receive no CORS grant | `test_cors_preflight_allows_every_method_the_dashboard_uses` |
 | T21 | Overstated conclusions in exports (STIX indicators, "malicious", "AI detected") | STIX contains observed-data and notes only; ML wording "requires investigation" | `test_stix_export_is_valid_observation_only`, UI wording check |
 
 ## Residual risks (accepted, documented)

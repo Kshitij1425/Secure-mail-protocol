@@ -20,13 +20,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from securemailscope import __version__
 from securemailscope.api.config import get_settings
-from securemailscope.api.database import (AnomalyDB, CaptureDB, CertificateDB, FindingDB, ReportDB, SessionDB,
+from securemailscope.api.database import (AnnotationDB, AnomalyDB, CaptureDB, CertificateDB, FindingDB, ReportDB, SessionDB,
                                           SessionFindingDB, get_db, init_db)
 from securemailscope.api.schemas import (AnalysisResponse, AnomalyDetail, AnomalySummary, CaptureDetail,
                                          CaptureSummary, CertificateDetail, CertificateSummary, FindingDetail,
                                          FindingStatusUpdate, FindingSummary, HealthResponse, PostureResponse,
                                          ReportSummary, SessionDetail, SessionSummary)
-from securemailscope.api.services.analyzers import AnalysisService, ServiceError, evidence_chain
+from securemailscope.api.services.analyzers import (AnalysisService, ServiceError, annotation_target_label,
+                                                     evidence_chain)
+from securemailscope.api.schemas import AnnotationCreate, AnnotationOut, AnnotationUpdate, TrendPoint
 from securemailscope.policy import PROFILES
 from securemailscope.reports.render import safe_report_basename
 from securemailscope.rules.engine import RULE_GUIDANCE
@@ -109,7 +111,7 @@ async def security_headers(request: Request, call_next):
 
 
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_origins, allow_credentials=False,
-                   allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Accept"])
+                   allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Content-Type", "Accept"])
 app.add_middleware(BodySizeLimitMiddleware)
 
 service = AnalysisService()
@@ -369,6 +371,91 @@ def _download_stem(c, redact: bool) -> str:
     if redact:
         return f"capture_{(c.file_hash or 'unknown')[:12]}"
     return safe_report_basename(c.filename)
+
+
+# ------------------------------------------------------------------ analyst annotations
+@app.get("/captures/{capture_id}/annotations", response_model=List[AnnotationOut])
+def list_annotations(capture_id: str, target_type: Optional[str] = None, target_id: Optional[str] = None,
+                     db: Session = Depends(get_db)):
+    _capture_or_404(db, capture_id)
+    q = db.query(AnnotationDB).filter(AnnotationDB.capture_id == capture_id)
+    if target_type:
+        q = q.filter(AnnotationDB.target_type == target_type)
+    if target_id:
+        q = q.filter(AnnotationDB.target_id == target_id)
+    return q.order_by(AnnotationDB.created_at, AnnotationDB.id).limit(MAX_PAGE).all()
+
+
+@app.post("/captures/{capture_id}/annotations", response_model=AnnotationOut, status_code=201)
+def create_annotation(capture_id: str, body: AnnotationCreate, db: Session = Depends(get_db)):
+    """Attach an analyst note / report selection. The target must exist in this analysis."""
+    c = _capture_or_404(db, capture_id)
+    doc = _raw_doc(c)
+    if annotation_target_label(doc, body.target_type, body.target_id) is None:
+        raise HTTPException(status_code=422, detail=f"{body.target_type} not found in this analysis")
+    if not body.text.strip() and not body.include_in_report:
+        raise HTTPException(status_code=422, detail="Provide a note or select the item for the report")
+    row = AnnotationDB(capture_id=capture_id, target_type=body.target_type, target_id=body.target_id,
+                       text=body.text.strip(), include_in_report=body.include_in_report)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _annotation_or_404(db: Session, annotation_id: int) -> AnnotationDB:
+    a = db.get(AnnotationDB, annotation_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    return a
+
+
+@app.patch("/annotations/{annotation_id}", response_model=AnnotationOut)
+def update_annotation(annotation_id: int, body: AnnotationUpdate, db: Session = Depends(get_db)):
+    a = _annotation_or_404(db, annotation_id)
+    if body.text is not None:
+        a.text = body.text.strip()
+    if body.include_in_report is not None:
+        a.include_in_report = body.include_in_report
+    db.commit()
+    db.refresh(a)
+    return a
+
+
+@app.delete("/annotations/{annotation_id}", status_code=204)
+def delete_annotation(annotation_id: int, db: Session = Depends(get_db)):
+    db.delete(_annotation_or_404(db, annotation_id))
+    db.commit()
+    return Response(status_code=204)
+
+
+# ------------------------------------------------------------------ posture trend
+@app.get("/captures/{capture_id}/trend", response_model=List[TrendPoint])
+def get_trend(capture_id: str, db: Session = Depends(get_db)):
+    """Completed analyses that share at least one mail server (protocol, address, port) with this one,
+    ordered by capture time. Association by shared server address only; not an identity claim."""
+    _capture_or_404(db, capture_id)
+    servers = {(s.protocol, s.dest_ip, s.dest_port) for s in
+               db.query(SessionDB.protocol, SessionDB.dest_ip, SessionDB.dest_port).filter(SessionDB.capture_id == capture_id)}
+    if not servers:
+        return []
+    rows = (db.query(SessionDB.capture_id, SessionDB.protocol, SessionDB.dest_ip, SessionDB.dest_port)
+            .filter(SessionDB.dest_ip.in_({ip for _, ip, _ in servers})).distinct().all())
+    shared = {}
+    for cid, proto, ip, port in rows:
+        if (proto, ip, port) in servers:
+            shared.setdefault(cid, set()).add(f"{proto} {ip}:{port}")
+    out = []
+    for c in db.query(CaptureDB).filter(CaptureDB.capture_id.in_(shared), CaptureDB.analysis_status == "completed"):
+        counts = _severity_counts(db, c.capture_id)
+        out.append(TrendPoint(
+            capture_id=c.capture_id, filename=c.filename, file_hash=c.file_hash, policy_profile=c.policy_profile,
+            capture_start=c.capture_start.isoformat() if c.capture_start else None, analysis_timestamp=c.analysis_timestamp,
+            posture_score=c.posture_score, posture_status=c.posture_status, findings_count=sum(counts.values()),
+            severe_findings_count=counts.get("CRITICAL", 0) + counts.get("HIGH", 0),
+            shared_servers=sorted(shared[c.capture_id]), is_selected=c.capture_id == capture_id))
+    out.sort(key=lambda t: (t.capture_start or "", t.analysis_timestamp.isoformat() if t.analysis_timestamp else ""))
+    return out
 
 
 def _raw_doc(c):

@@ -1,5 +1,5 @@
 """
-Data Models for M9: Cryptographic Security Posture Scoring.
+Data models: Cryptographic Security Posture Scoring.
 
 Defines the core data structures for scores, dimensions, and explanations.
 """
@@ -93,7 +93,7 @@ class PostureScore:
     """
     Complete security posture score for a capture.
 
-    This is the main output of the M9 scoring engine.
+    This is the main output of the scoring engine.
     """
     overall_score: Optional[float]  # 0-100; None = insufficient evidence
     status: ScoreStatus

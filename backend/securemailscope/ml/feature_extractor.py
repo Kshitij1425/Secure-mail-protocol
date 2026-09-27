@@ -1,5 +1,5 @@
 """
-M11 Feature Extractor: Extract numerical features from TLS sessions for anomaly detection.
+Feature extractor (v1 model): Extract numerical features from TLS sessions for anomaly detection.
 
 Extracts features that characterize TLS session behavior:
 - Protocol version as ordinal

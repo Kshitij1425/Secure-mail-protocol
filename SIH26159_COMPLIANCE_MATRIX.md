@@ -6,7 +6,7 @@ with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established 
 
 | Req | Requirement | Status | Implementation | Evidence |
 |---|---|---|---|---|
-| A | Passive analysis of SMTP/IMAP/POP3 from PCAP | FULL | `ingestion`, whole pipeline; no network access | 28 fixture captures, `test_real_pcap_validation.py`, 9 real server/client lab captures (`test_real_mail_captures.py`; no IMAP server in the lab) |
+| A | Passive analysis of SMTP/IMAP/POP3 from PCAP | FULL | `ingestion`, whole pipeline; no network access | 28 fixture captures, `test_real_pcap_validation.py`, 15 real server/client lab captures covering SMTP, IMAP and POP3 (`test_real_mail_captures.py`), 5 external public captures (`test_external_captures.py`) |
 | B | Automatic protocol identification | FULL | `protocols/detector.py`: banner + commands + port; non-standard ports by banner; implicit TLS by port; non-email rejected | `smtp_nonstandard_port`, `unrelated_traffic`, `test_detector_*` |
 | C | STARTTLS negotiation / upgrade detection and validation | FULL | `starttls/machine.py` + TLS parser confirmation; requested/accepted/rejected (SMTP 4xx/5xx, IMAP tagged, POP3 -ERR), advertised, repeated, pipelined, plaintext after rejection; "requested" never equated with "established" | `smtp_starttls_downgrade`, `pop3_starttls_rejected`, `smtp_starttls_truncated`, `smtp_starttls_pipelined`, STARTTLS regression tests |
 | D | Complete TCP stream reconstruction | FULL (IPv4/IPv6; no IP-fragment reassembly) | `tcp/stream.py`: per-direction seq reassembly, OOO, retransmission, overlap conflicts, gaps, wraparound, port reuse, limits | `out_of_order`, `retransmissions`, `missing_segment`, `tcp_overlap_conflict`, property test `test_reassembly_recovers_exact_bytes` |
@@ -28,9 +28,41 @@ with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established 
 | T | JSON report | FULL | `reports/document.py` | `test_reports_all_formats`, CLI tests |
 | U | HTML report | FULL | Jinja2 template, escaped, CSP | same |
 | V | PDF report | FULL | ReportLab (dependency declared) | same; browser E2E download |
-| W | Interactive dashboard | FULL | React investigation workflow: Captures (history, re-analysis, compare), Overview, Findings (evidence chain, remediation), Sessions (timeline), Certificates (inventory), Timeline, Anomalies, Reports/export (raw or redacted; bundle; STIX) | scripted Playwright walkthrough (45 checks, 0 console errors) |
+| W | Interactive dashboard | FULL | 8-step workflow: Capture, Analyze, Posture, Findings (why am I seeing this, evidence chain), Sessions (server grouping, timeline), Certificates (inventory, related findings), Evidence (register, timeline), Report (raw/redacted, bundle, STIX); ML anomalies, compare and trend, analyst notes | scripted Playwright walkthrough (80 checks, 0 console/HTTP errors) |
 
 Technically incorrect claims found in earlier documentation and corrected: TLS 1.3
 certificate extraction, "chain validation" (only leaf parsing existed), "AI-based" posture
 (ML never influenced the score, correctly), ML seed "not fixed" (it was 42), throughput figures
 measured on 3-30 packet files.
+
+## SIH26159 readiness check (2026-09-27)
+
+Verified on this date with the full test suite (411 tests), the 28 fixture captures, 15 real lab
+captures, 5 external public captures and a scripted browser walkthrough (80 checks).
+
+| Area | Status | Verified by |
+|---|---|---|
+| SMTP identification | Verified | fixtures; real lab (Mailpit, aiosmtpd); external `smtp.pcap`, `smtp-ssl`, `smtp2525-ssl` (non-standard port) |
+| IMAP identification | Verified | fixtures; real lab pymap captures on 993 and 143; external `imap-ssl` (Dovecot) |
+| POP3 identification | Verified | fixtures; real lab Mailpit POP3S; external `pop-ssl` (Dovecot, STLS on 110) |
+| STARTTLS / STLS | Verified | advertised / requested / accepted / rejected states in real SMTP and IMAP captures and external IMAP/POP3/SMTP |
+| TCP reconstruction | Verified | property tests; out-of-order, retransmission, gap, overlap fixtures |
+| TLS parsing | Verified | TLS 1.0-1.3 real handshakes; external TLS parameters cross-checked with dpkt.ssl |
+| X.509 extraction | Verified for TLS 1.2 and earlier | real and external captures; **TLS 1.3 certificates: NOT OBSERVABLE (encrypted by the protocol)** |
+| Certificate analysis | Verified: validity at capture time, key, signature, SAN/SNI, self-signed, chain linkage by signature | **Trust-anchor validation: NOT EVALUATED (no trust store, CRL or OCSP)** |
+| Deprecated TLS | Verified | TLS 1.0 / 1.1 real captures (SMTP, IMAP, ML pool) |
+| Weak cryptography | Verified | RSA-1024, DHE-1024, static RSA, CBC/SHA-1 suites; 3DES in a synthetic fixture only (OpenSSL 3 refuses it) |
+| Insecure configurations | Verified | STARTTLS rejected + plaintext AUTH/LOGIN (SMTP and IMAP), expired and self-signed certificates |
+| PFS assessment | Verified | static-RSA vs (EC)DHE sessions; TLS 1.3 |
+| Security posture scoring | Verified | scoring properties; before/after remediation pair (0 -> 100) |
+| Anomaly detection | Implemented, evaluated on lab data only | 80 labelled real lab sessions (ML_DESIGN.md); no real-world accuracy claimed |
+| Prioritised findings | Verified | remediation plan ordering; findings sorted by priority |
+| Recommendations | Verified | per finding: recommendation, why it matters, expected effect, references |
+| JSON report | Verified | 14 sections + optional analyst appendix |
+| HTML report | Verified | 14 sections, escaped, CSP |
+| PDF report | Verified | same 14 sections (pypdf-checked order) |
+| Interactive dashboard | Verified | 8-step workflow, drawers, compare/trend, notes; browser walkthrough |
+| Forensic traceability | Verified | evidence chain per finding, evidence register with frame numbers, capture SHA-256 in every output, deterministic evidence bundle |
+
+Not observable in passive analysis in general: server capabilities that were not exercised,
+anything inside TLS, DANE / MTA-STS / DNSSEC policy.

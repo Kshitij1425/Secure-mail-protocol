@@ -74,22 +74,39 @@ data reassembled from several segments, the frame is the one that made the data 
 * The evidence bundle contains analysis results and metadata, never packet payloads; it is not
   a substitute for preserving the original capture.
 
+## Analyst metadata
+
+* Notes and "include in investigation report" selections are stored with the analysis and appear
+  (selected ones only) in an appendix of generated reports. Redaction pseudonymises addresses,
+  host names and e-mail addresses inside notes, but not other free text (names, ticket numbers).
+* The posture trend relates analyses that share a server (protocol, address, port). Address
+  reuse or NAT can relate unrelated servers; different policy profiles change scores.
+* Server grouping is an association of observed connections, not ownership or identity.
+
 ## User interface
 
-* The design follows public GIGW 3.0 accessibility conventions. The NTRO website that was
-  given as visual inspiration could not be reached from the build environment, so nothing was
-  derived from it; no government emblem, seal, logo or branding is used.
+* The live NTRO website could not be reached from the build environment; archived public pages
+  of NTRO and NCIIPC and the public GIGW 3.0 guidance informed the restrained layout (see
+  DESIGN_SYSTEM.md). No government emblem, seal, logo, branding or content is used.
 * Browser verification is a scripted Playwright walkthrough plus manual review in Chromium;
   other browsers and screen readers were not tested.
 
 ## Test data
 
-No real-world third-party mail captures were available. Nine captures in
-`backend/tests/real_captures/` are real mail server/client sessions generated in a controlled
-test environment (Mailpit, aiosmtpd, Python clients) recorded by a TCP relay: application
-bytes are real, TCP/IP headers are reconstructed, and the server host name was replaced by a
-same-length placeholder in plaintext only (recorded in `manifest.json`). The lab has no IMAP
-server. The Docker lab with Postfix/Dovecot and tcpdump (`lab/docker/`) was not run. All other fixtures contain TLS bytes
+No enterprise or operational mail traffic was used. Validation layers:
+
+* 15 captures in `backend/tests/real_captures/`: real mail server/client sessions generated in a
+  controlled local environment (Mailpit, aiosmtpd, pymap servers; Python smtplib/poplib/imaplib
+  clients) covering SMTP, IMAP and POP3, healthy and weak. Recorded by a TCP relay: application
+  bytes and timing are real, TCP/IP headers are reconstructed (no raw capture driver, Docker or
+  WSL was available). The Mailpit greeting host name was replaced by a same-length placeholder
+  in plaintext only (recorded in `manifest.json`). The IMAPS listener is added by a small lab
+  launcher around pymap (pymap offers STARTTLS only).
+* 5 independently produced public captures (Wireshark wiki; downloaded at test time, GPL, not
+  redistributed). They are single sessions from lab-style servers, not a representative sample.
+* The Docker lab with Postfix/Dovecot and tcpdump (`lab/docker/`) was not run.
+
+All other fixtures contain TLS bytes
 produced by OpenSSL 3.0.13 (real handshakes, certificates, encrypted records) wrapped in
 synthesised TCP/IP framing; one fixture (`smtp_tls12_3des_synthetic`) is fully hand-built
 because OpenSSL 3 cannot negotiate 3DES/RC4. See `backend/tests/robustness/fixture_factory.py`.

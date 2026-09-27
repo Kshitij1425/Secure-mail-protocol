@@ -1,6 +1,6 @@
 # Demo Runbook
 
-Verified end-to-end in a browser on 2026-09-27 (Windows 11, Python 3.12.5, Node 24; scripted Playwright walkthrough, 45 checks).
+Verified end-to-end in a browser on 2026-09-27 (Windows 11, Python 3.12.5, Node 24; scripted Playwright walkthrough, 80 checks).
 
 ## 1. Start
 
@@ -24,26 +24,28 @@ older schema is moved aside to `securemailscope.db.schema-v1-<timestamp>.bak`.
 | `smtp_tls12_sni_mismatch.pcap` | Certificate does not cover the SNI hostname (CERT-006) |
 | `unrelated_traffic.pcap` | HTTP, SSH, HTTPS only: posture `Unknown`, not "Excellent" |
 
-## 3. Walkthrough
+## 3. Walkthrough (8-step workflow)
 
-1. **Analyse a capture** (Tools) -> choose a file -> choose a policy profile -> *Run analysis*.
-   Invalid files are rejected with a message.
-2. **1 Captures**: history of every analysis (policy, score, severity counts). *Open* selects
-   an analysis; *Re-analyse* runs the same stored file under another profile (SHA-256 checked).
-3. **2 Overview**: score, counts, severity distribution, posture by dimension, remediation plan.
-4. **3 Findings**: search, severity filter, sort; click a finding -> remediation view (why it
-   matters, expected effect), evidence chain with OBSERVED / INFERRED / NOT OBSERVED labels,
-   frames, triage status.
-5. **4 Sessions**: filter, search, sort; click a session -> TLS details, STARTTLS state,
-   linked findings, certificate chain, ML assessment and the session timeline.
-6. **5 Certificates**: inventory of distinct certificates; filter; click -> extraction,
-   chain linkage and trust (not evaluated) shown separately; sessions where seen.
-7. **6 Timeline**: capture-time events with frame numbers; filter by session and event type.
-8. **7 Anomalies**: outliers "require investigation"; toggle to show all evaluated sessions.
-9. **8 Reports and export**: Raw or Redacted; PDF / HTML / JSON report, evidence bundle,
-   STIX 2.1; list of generated reports.
-10. Browser *Back* returns to the previous detail view; refreshing keeps the selection (URL).
-11. Utility strip: A / A+ / A++ text size and high contrast (remembered per browser).
+1. **Capture**: history of every analysis (policy, score, severity counts). *Open* an analysis;
+   *Re-analyse* the same stored file under another profile (SHA-256 checked); tick two to compare.
+2. **Analyze**: choose a file and a policy profile, *Run analysis* (upload bar, then server analysis).
+3. **Posture**: score, severity distribution, dimensions, top issues, ML summary, capture notes.
+   The case bar above every analysis page names the capture, SHA-256, policy and posture.
+4. **Findings**: register-numbered list; open one -> *Why am I seeing this?* (what was observed,
+   how it was established, evidence frame, affected session, TLS, certificate, why it matters,
+   recommendation, expected effect), the evidence chain, analyst notes, triage.
+5. **Sessions**: list with filters, or *Grouped by server*; open a session -> TLS, STARTTLS,
+   findings, certificate chain, ML assessment, session timeline, notes.
+6. **Certificates**: inventory; open one -> extraction / linkage / trust (not evaluated), sessions,
+   certificate findings on those sessions, notes.
+7. **Evidence**: numbered evidence register (frame, capture time, evidence class) and the full
+   capture timeline (arrow keys switch tabs).
+8. **Report**: raw or redacted PDF / HTML / JSON (14 sections; Appendix A lists items you selected),
+   evidence bundle, STIX 2.1.
+
+Supporting views: **ML anomalies** (deterministic vs ML explained, limitations), **Compare and
+trend**, **About and limitations**. Each step page links to the previous and next step; Esc
+closes a detail drawer; refresh keeps the selection (URL).
 
 ### Remediation story (real captures)
 

@@ -1,8 +1,8 @@
 """
-M11 Anomaly Detector: Unsupervised anomaly detection on TLS sessions.
+Anomaly detector: Unsupervised anomaly detection on TLS sessions.
 
 Uses Isolation Forest to identify unusual TLS session patterns without
-overriding deterministic security findings from M8.
+overriding deterministic rule findings.
 
 Anomalies are surfaced as supplementary insights, not blocking findings.
 """
@@ -44,7 +44,7 @@ class IsolationForestAnomalyDetector:
     split values. Anomalies require fewer splits to isolate, resulting in
     shorter paths through the tree ensemble.
 
-    NOT a replacement for M8 deterministic rules — purely supplementary.
+    NOT a replacement for the deterministic rules — purely supplementary.
     """
 
     MODEL_VERSION = "isolation-forest/1"

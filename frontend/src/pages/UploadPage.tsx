@@ -4,7 +4,7 @@ import { FileUp } from 'lucide-react';
 import { errorMessage, getPolicies, uploadPcap } from '../lib/api';
 import { useCapture } from '../context/CaptureContext';
 import { useAsync } from '../hooks/useAsync';
-import { Breadcrumbs, PageTitle, Panel } from '../components/ui';
+import { Alert, Breadcrumbs, PageTitle, Panel } from '../components/ui';
 
 const MAX_MB = 100;
 const EXTENSIONS = ['pcap', 'pcapng', 'cap'];
@@ -51,8 +51,8 @@ export const UploadPage = () => {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: 'Analyse a capture' }]} />
-      <PageTitle title="Analyse a capture" lead="The capture is analysed passively on this machine. No mail server is contacted and no traffic is decrypted." />
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: 'Analyze' }]} />
+      <PageTitle title="Analyze a capture" lead="The capture is analysed passively on this machine. No mail server is contacted and no traffic is decrypted." />
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] gap-5">
         <Panel title="1. Capture file">
           <div role="button" tabIndex={0} aria-label="Choose a capture file"
@@ -82,9 +82,19 @@ export const UploadPage = () => {
           {selected && <p className="text-xs text-ink-3 mt-3">Minimum keys: RSA {selected.min_rsa_bits}, EC {selected.min_ec_bits}, DH {selected.min_dh_bits} bits. The profile is recorded in every report.</p>}
         </Panel>
       </div>
-      {error && <p role="alert" className="text-sm text-sev-high">{error}</p>}
+      {error && <Alert tone="error" title="The capture was not analysed">{error}</Alert>}
+      {busy && (
+        <Panel title="3. Progress">
+          <div role="status" aria-live="polite" className="space-y-2 text-sm">
+            <div className="flex justify-between"><span>{progress < 100 ? 'Uploading the capture' : 'Upload complete; analysing on the server'}</span><span className="tabular-nums">{progress < 100 ? `${progress}%` : ''}</span></div>
+            <div className="h-2 bg-line rounded-sm overflow-hidden" aria-hidden="true">
+              {progress < 100 ? <div className="h-2 bg-signal" style={{ width: `${progress}%` }} /> : <div className="h-2 w-1/3 bg-signal animate-pulse" />}
+            </div>
+            {progress >= 100 && <p className="text-xs text-ink-3">TCP reassembly, protocol identification, STARTTLS and TLS parsing, certificate analysis, rules, scoring and the ML stage run in one request; large captures take longer.</p>}
+          </div>
+        </Panel>
+      )}
       <div className="flex items-center justify-end gap-3">
-        {busy && <span className="text-sm text-ink-2" role="status">{progress < 100 ? `Uploading ${progress}%` : 'Analysing the capture'}</span>}
         {file && !busy && <button type="button" className="btn" onClick={() => setFile(null)}>Clear</button>}
         <button type="button" className="btn-primary" disabled={!file || busy} onClick={() => void run()}>Run analysis</button>
       </div>

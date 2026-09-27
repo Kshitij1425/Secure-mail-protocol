@@ -1,8 +1,8 @@
 import axios, { AxiosError } from 'axios';
 import type {
-  AnalysisResponse, AnomalyDetail, AnomalySummary, CaptureDetail, CaptureSummary, CertificateDetail,
+  AnalysisResponse, Annotation, AnnotationTarget, AnomalyDetail, AnomalySummary, CaptureDetail, CaptureSummary, CertificateDetail,
   CertificateInventoryItem, CertificateSummary, Comparison, EvidenceChain, FindingDetail, FindingSummary,
-  PolicyProfile, PostureResponse, ReportSummary, SessionDetail, SessionSummary, TimelineEvent,
+  PolicyProfile, PostureResponse, ReportSummary, SessionDetail, SessionSummary, TimelineEvent, TrendPoint,
 } from '../types/api';
 
 export const BASE_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -69,6 +69,19 @@ export const getAnomaly = async (id: number) => (await apiClient.get<AnomalyDeta
 
 export const getCompare = async (a: string, b: string) =>
   (await apiClient.get<Comparison>('/compare', { params: { a, b } })).data;
+
+export const getTrend = async (captureId: string) =>
+  (await apiClient.get<TrendPoint[]>(`/captures/${enc(captureId)}/trend`)).data;
+
+/* Analyst annotations: notes and "include in investigation report" selections. */
+export const getAnnotations = async (captureId: string, targetType?: AnnotationTarget, targetId?: string) =>
+  (await apiClient.get<Annotation[]>(`/captures/${enc(captureId)}/annotations`,
+    { params: { target_type: targetType, target_id: targetId } })).data;
+export const createAnnotation = async (captureId: string, body: { target_type: AnnotationTarget; target_id: string; text: string; include_in_report: boolean }) =>
+  (await apiClient.post<Annotation>(`/captures/${enc(captureId)}/annotations`, body)).data;
+export const updateAnnotation = async (id: number, body: { text?: string; include_in_report?: boolean }) =>
+  (await apiClient.patch<Annotation>(`/annotations/${id}`, body)).data;
+export const deleteAnnotation = async (id: number) => { await apiClient.delete(`/annotations/${id}`); };
 
 export const getReports = async (captureId: string) =>
   (await apiClient.get<ReportSummary[]>('/reports', { params: { capture_id: captureId } })).data;

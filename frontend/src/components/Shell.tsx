@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
-import { RefreshCw } from 'lucide-react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, RefreshCw } from 'lucide-react';
 import { useCapture } from '../context/CaptureContext';
 import { apiClient } from '../lib/api';
-import {  } from './ui';
 import { fmtScore, fmtUtc } from '../lib/format';
 
 const pref = (k: string, fallback: string) => {
@@ -50,7 +49,7 @@ const AppHeader = () => {
           <svg aria-hidden="true" viewBox="0 0 32 32" className="w-8 h-8"><rect width="32" height="32" rx="4" fill="currentColor" opacity=".08" /><path d="M7 10h18v12H7z" fill="none" stroke="currentColor" strokeWidth="2" /><path d="M7 10l9 7 9-7" fill="none" stroke="currentColor" strokeWidth="2" /><circle cx="23" cy="22" r="4" fill="rgb(var(--chrome))" stroke="#7FA8DD" strokeWidth="2" /></svg>
           <div>
             <div className="text-lg font-semibold tracking-wide leading-tight">SecureMailScope</div>
-            <div className="text-xs text-chrome-muted leading-tight">Email cryptographic posture analysis</div>
+            <div className="text-xs text-chrome-muted leading-tight">Email TLS forensics workstation</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm min-w-0 max-w-full">
@@ -77,49 +76,90 @@ const AppHeader = () => {
   );
 };
 
-const STEPS: { to: string; label: string; count?: (c: ReturnType<typeof useCapture>['activeCapture']) => number | null }[] = [
-  { to: '/captures', label: 'Captures' },
-  { to: '/', label: 'Overview' },
-  { to: '/findings', label: 'Findings', count: (c) => c?.findings_count ?? null },
-  { to: '/sessions', label: 'Sessions', count: (c) => c?.email_session_count ?? null },
-  { to: '/certificates', label: 'Certificates' },
-  { to: '/timeline', label: 'Timeline' },
-  { to: '/anomalies', label: 'Anomalies', count: (c) => c?.anomalies_count ?? null },
-  { to: '/reports', label: 'Reports and export' },
+type Cap = ReturnType<typeof useCapture>['activeCapture'];
+
+/** The investigation workflow, in the order an analyst works through a capture. */
+const STEPS: { to: string; label: string; hint: string; count?: (c: Cap) => number | null }[] = [
+  { to: '/captures', label: 'Capture', hint: 'Stored captures and analysis history' },
+  { to: '/upload', label: 'Analyze', hint: 'Upload a capture and choose a policy profile' },
+  { to: '/', label: 'Posture', hint: 'Score, dimensions, top issues' },
+  { to: '/findings', label: 'Findings', hint: 'Deterministic rule results', count: (c) => c?.findings_count ?? null },
+  { to: '/sessions', label: 'Sessions', hint: 'SMTP / IMAP / POP3 connections and servers', count: (c) => c?.email_session_count ?? null },
+  { to: '/certificates', label: 'Certificates', hint: 'Observed X.509 certificates' },
+  { to: '/evidence', label: 'Evidence', hint: 'Evidence register and capture timeline' },
+  { to: '/reports', label: 'Report', hint: 'Reports, evidence bundle, STIX' },
 ];
+const SUPPORT: { to: string; label: string; count?: (c: Cap) => number | null }[] = [
+  { to: '/anomalies', label: 'ML anomalies', count: (c) => c?.anomalies_count ?? null },
+  { to: '/compare', label: 'Compare and trend' },
+  { to: '/about', label: 'About and limitations' },
+];
+const ANALYSIS_PAGES = ['/', '/findings', '/sessions', '/certificates', '/evidence', '/reports', '/anomalies'];
 
 const SideNav = () => {
   const { activeCapture } = useCapture();
-  const item = (to: string, label: ReactNode, end = false) => (
-    <NavLink to={to} end={end}
-      className={({ isActive }) => `flex items-center gap-2 px-3 py-2 rounded text-sm ${isActive ? 'bg-panel text-ink font-medium border border-line' : 'text-ink-2 hover:bg-panel/60 hover:text-ink border border-transparent'}`}>
+  const item = (to: string, label: ReactNode, title?: string) => (
+    <NavLink to={to} end={to === '/'} title={title}
+      className={({ isActive }) => `flex items-center gap-2 px-3 py-1.5 rounded-sm text-sm border-l-2 ${isActive ? 'bg-panel text-ink font-semibold border-signal' : 'text-ink-2 hover:bg-panel/70 hover:text-ink border-transparent'}`}>
       {label}
     </NavLink>
   );
+  const badge = (n: number | null | undefined) => (n !== null && n !== undefined
+    ? <span className="text-xs tabular-nums text-ink-3" aria-label={`${n} items`}>{n}</span> : null);
   return (
-    <nav aria-label="Workflow" className="w-full lg:w-60 shrink-0 lg:border-r border-b lg:border-b-0 border-line bg-sunken">
+    <nav aria-label="Investigation workflow" className="w-full lg:w-56 shrink-0 lg:border-r border-b lg:border-b-0 border-line bg-sunken">
       <div className="p-3 space-y-4">
         <div>
-          <div className="label px-3 mb-1.5">Investigation workflow</div>
-          <ol className="space-y-0.5">
-            {STEPS.map((s, i) => {
-              const n = s.count?.(activeCapture);
-              return (
-                <li key={s.to}>
-                  {item(s.to, <><span className="w-4 text-right text-ink-3 tabular-nums text-xs" aria-hidden="true">{i + 1}</span><span className="flex-1">{s.label}</span>{n !== null && n !== undefined && <span className="text-xs tabular-nums text-ink-3">{n}</span>}</>, s.to === '/')}
-                </li>
-              );
-            })}
+          <div className="label px-3 mb-1.5 uppercase tracking-wide text-[10px]">Investigation workflow</div>
+          <ol className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-0.5">
+            {STEPS.map((s, i) => (
+              <li key={s.to}>
+                {item(s.to, <><span className="w-4 text-right text-ink-3 tabular-nums text-xs" aria-hidden="true">{i + 1}</span><span className="flex-1">{s.label}</span>{badge(s.count?.(activeCapture))}</>, s.hint)}
+              </li>
+            ))}
           </ol>
         </div>
         <div>
-          <div className="label px-3 mb-1.5">Tools</div>
-          <ul className="space-y-0.5">
-            <li>{item('/upload', 'Analyse a capture')}</li>
-            <li>{item('/compare', 'Compare analyses')}</li>
+          <div className="label px-3 mb-1.5 uppercase tracking-wide text-[10px]">Supporting analysis</div>
+          <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-1 gap-0.5">
+            {SUPPORT.map((s) => <li key={s.to}>{item(s.to, <><span className="flex-1">{s.label}</span>{badge(s.count?.(activeCapture))}</>)}</li>)}
           </ul>
         </div>
       </div>
+    </nav>
+  );
+};
+
+/** The analysis currently under investigation (document-style record header). */
+const CaseBar = () => {
+  const { activeCapture: c } = useCapture();
+  const { pathname } = useLocation();
+  if (!c || !ANALYSIS_PAGES.includes(pathname)) return null;
+  const items: { k: string; v: ReactNode; cls?: string }[] = [
+    { k: 'Capture', v: c.filename, cls: 'font-medium break-all' },
+    { k: 'SHA-256', v: `${c.file_hash.slice(0, 16)}...`, cls: 'font-mono' },
+    { k: 'Captured', v: fmtUtc(c.capture_start) },
+    { k: 'Policy', v: c.policy_profile ?? 'balanced' },
+    { k: 'Posture', v: c.analysis_status === 'completed' ? `${fmtScore(c.posture_score)} / 100 (${c.posture_status ?? 'Unknown'})` : c.analysis_status },
+  ];
+  return (
+    <dl className="casebar" aria-label="Analysis under investigation">
+      {items.map(({ k, v, cls }) => <div key={k} className="flex items-baseline gap-1.5 min-w-0"><dt>{k}</dt><dd className={`min-w-0 ${cls ?? ''}`}>{v}</dd></div>)}
+    </dl>
+  );
+};
+
+/** Previous / next workflow step, so each page leads to the next one. */
+const WorkflowPager = () => {
+  const { pathname } = useLocation();
+  const i = STEPS.findIndex((s) => s.to === pathname);
+  if (i < 0) return null;
+  const prev = STEPS[i - 1];
+  const next = STEPS[i + 1];
+  return (
+    <nav aria-label="Workflow steps" className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 text-sm">
+      {prev ? <Link to={prev.to} className="link inline-flex items-center gap-1"><ArrowLeft size={14} aria-hidden="true" />Step {i}: {prev.label}</Link> : <span />}
+      {next ? <Link to={next.to} className="link inline-flex items-center gap-1">Step {i + 2}: {next.label}<ArrowRight size={14} aria-hidden="true" /></Link> : <span />}
     </nav>
   );
 };
@@ -132,9 +172,14 @@ const Footer = () => {
   }, []);
   return (
     <footer className="border-t border-line bg-panel text-xs text-ink-3">
-      <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-3">
-        <span>SecureMailScope {version && `v${version}`}</span>
-        {activeCapture?.analysis_timestamp && <span>Selected analysis completed {fmtUtc(activeCapture.analysis_timestamp)}</span>}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-3">
+        <Link to="/about" className="link">About and methodology</Link><span aria-hidden="true">|</span>
+        <Link to="/about#limitations" className="link">Limitations</Link><span aria-hidden="true">|</span>
+        <Link to="/about#data-handling" className="link">Data handling</Link>
+        <span className="lg:ml-auto">SecureMailScope {version && `v${version}`}</span>
+        {activeCapture?.analysis_timestamp && <span>Selected analysis last updated {fmtUtc(activeCapture.analysis_timestamp)}</span>}
+      </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 pb-3 pt-1">
         <span>Passive analysis of stored captures. No traffic is generated and nothing is decrypted.</span>
         <span className="lg:ml-auto">Independent academic project (SIH 2026, SIH26159). Not affiliated with or endorsed by any government agency.</span>
       </div>
@@ -148,7 +193,11 @@ export const Shell = ({ children }: { children: ReactNode }) => (
     <AppHeader />
     <div className="flex-1 flex flex-col lg:flex-row min-h-0">
       <SideNav />
-      <main id="main" tabIndex={-1} className="flex-1 min-w-0 p-4 lg:p-6 space-y-5 focus:outline-none">{children}</main>
+      <main id="main" tabIndex={-1} className="flex-1 min-w-0 p-4 lg:p-6 space-y-5 focus:outline-none">
+        <CaseBar />
+        {children}
+        <WorkflowPager />
+      </main>
     </div>
     <Footer />
   </div>

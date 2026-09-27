@@ -108,6 +108,18 @@ def test_cors_policy(client):
     assert "access-control-allow-origin" not in bad.headers
 
 
+@pytest.mark.parametrize("method,path", [("GET", "/captures"), ("POST", "/analyze"), ("PATCH", "/findings/x/status"),
+                                         ("PATCH", "/annotations/1"), ("DELETE", "/annotations/1")])
+def test_cors_preflight_allows_every_method_the_dashboard_uses(client, method, path):
+    """Regression: DELETE (removing an analyst note) was missing from the CORS methods, so the browser blocked it."""
+    r = client.options(path, headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": method,
+                                      "Access-Control-Request-Headers": "content-type"})
+    assert r.status_code == 200, (method, r.status_code)
+    assert method in r.headers.get("access-control-allow-methods", "")
+    bad = client.options(path, headers={"Origin": "https://evil.example", "Access-Control-Request-Method": method})
+    assert "access-control-allow-origin" not in bad.headers
+
+
 # --------------------------------------------------------- cross-layer checks
 @pytest.mark.parametrize("name", ["implicit_tls_mixed.pcap", "ml_mixed_estate.pcap", "smtp_plaintext_auth.pcap",
                                   "smtp_weak_deprecated.pcap", "unrelated_traffic.pcap"])

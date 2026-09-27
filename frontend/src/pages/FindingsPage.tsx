@@ -5,11 +5,18 @@ import { errorMessage, getCaptureFindings, getFinding, getFindingChain, setFindi
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import { EvidenceChainView } from '../components/EvidenceChain';
-import { Breadcrumbs, Drawer, EvidenceTag, Mono, NeedCapture, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
+import { AnalystNotes } from '../components/AnalystNotes';
+import { Breadcrumbs, Disclosure, Drawer, EvidenceTag, Mono, NeedCapture, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
 import { sessionEndpoints, severityRank, shortSession } from '../lib/format';
 import type { FindingDetail } from '../types/api';
 
 const STATUSES = ['open', 'acknowledged', 'in_progress', 'resolved', 'false_positive'];
+const HOW: Record<string, string> = {
+  OBSERVED: 'Observed: the values are directly visible in the capture bytes.',
+  INFERRED: 'Inferred: derived from observed values (for example from the negotiated cipher suite).',
+  POTENTIAL_INDICATOR: 'Potential indicator: consistent with an attack or a misconfiguration; the capture cannot tell which.',
+  INSUFFICIENT_EVIDENCE: 'Insufficient evidence: the capture does not contain enough data to confirm it.',
+};
 
 export const FindingsPage = () => {
   const { activeCaptureId, activeCapture, refreshCaptures } = useCapture();
@@ -87,11 +94,12 @@ export const FindingsPage = () => {
           <StateBlock loading={list.loading} error={list.error} onRetry={list.reload} empty={!list.loading && rows.length === 0}
             emptyText={list.data?.length ? 'No findings match these filters.' : 'This analysis produced no findings.'}>
             <table className="tbl">
-              <thead><tr><th>Severity</th><th>Finding</th><th>Server (client)</th><th>Evidence</th><th>Triage</th></tr></thead>
+              <thead><tr><th className="sno">S. No.</th><th>Severity</th><th>Finding</th><th>Server (client)</th><th>Evidence</th><th>Triage</th></tr></thead>
               <tbody>
-                {rows.map((f) => (
+                {rows.map((f, i) => (
                   <tr key={f.finding_id} className="row-link" aria-selected={selectedId === f.finding_id}
                     onClick={() => open(f.finding_id)}>
+                    <td className="sno">{i + 1}</td>
                     <td><Severity value={f.severity} /></td>
                     <td>
                       <button type="button" className="text-left link" onClick={(e) => { e.stopPropagation(); open(f.finding_id); }}>{f.title}</button>
@@ -111,22 +119,27 @@ export const FindingsPage = () => {
           <Drawer title={ch?.finding.title ?? 'Finding'} subtitle={ch?.finding.rule_id} onClose={close}>
             <StateBlock loading={chain.loading} error={chain.error} onRetry={chain.reload}>
               {ch && d && <>
-                <section aria-labelledby="remediation-h" className="space-y-2">
-                  <h3 id="remediation-h" className="text-sm font-semibold">Remediation view</h3>
+                <section aria-labelledby="why-h" className="space-y-2">
+                  <h3 id="why-h" className="text-sm font-semibold">Why am I seeing this?</h3>
                   <dl className="kv">
-                    <dt>Problem</dt><dd>{ch.finding.description}</dd>
+                    <dt>What was observed</dt><dd>{ch.finding.description}</dd>
+                    <dt>How it was established</dt><dd><EvidenceTag value={ch.finding.evidence_type} /> <span className="text-ink-2">{HOW[ch.finding.evidence_type] ?? ''}</span></dd>
+                    <dt>Evidence</dt><dd>Capture frame{ch.evidence.frames.length === 1 ? '' : 's'} {ch.evidence.frames.join(', ') || 'not recorded'} <Link to="/evidence" className="link text-xs">Evidence register</Link></dd>
+                    <dt>Affected session</dt><dd>{d.affected_sessions.map((s) => <Link key={s} to={`/sessions?id=${encodeURIComponent(s)}`} className="link font-mono text-xs block break-all">{shortSession(s)}</Link>)}</dd>
+                    <dt>TLS</dt><dd>{ch.tls.status === 'NOT_OBSERVED' ? <span className="text-ink-2">{ch.tls.reason}</span> : <>{ch.tls.negotiated_version ?? 'version not observed'} <Mono>{ch.tls.cipher_suite ?? ''}</Mono></>}</dd>
+                    <dt>Certificate</dt><dd>{ch.certificate.status === 'OBSERVED' && ch.certificate.certificate_id
+                      ? <Link to={`/certificates?id=${encodeURIComponent(ch.certificate.certificate_id)}`} className="link break-words">{ch.certificate.subject}</Link>
+                      : <span className="inline-flex flex-wrap items-center gap-2"><EvidenceTag value={ch.certificate.status} /><span className="text-ink-2">{ch.certificate.reason}</span></span>}</dd>
                     <dt>Why it matters</dt><dd>{d.why_it_matters ?? 'not documented'}</dd>
-                    <dt>Affected</dt><dd>{d.affected_sessions.map((s) => <Link key={s} to={`/sessions?id=${encodeURIComponent(s)}`} className="link font-mono text-xs block break-all">{shortSession(s)}</Link>)}</dd>
-                    <dt>Observed evidence</dt><dd><EvidenceTag value={ch.finding.evidence_type} /> frames {ch.evidence.frames.join(', ') || 'not recorded'}</dd>
-                    <dt>Suggested remediation</dt><dd>{d.recommendation}</dd>
+                    <dt>Recommendation</dt><dd>{d.recommendation}</dd>
                     <dt>Expected effect</dt><dd>{d.expected_effect ?? 'not documented'}</dd>
-                    <dt>Policy</dt><dd>{ch.policy_profile}; confidence {Math.round(ch.finding.confidence * 100)}%; score impact of this root cause {ch.finding.risk_contribution.toFixed(1)} points</dd>
                   </dl>
+                  <p className="text-xs text-ink-3">Policy {ch.policy_profile}; confidence {Math.round(ch.finding.confidence * 100)}%; this root cause lowers the score by {ch.finding.risk_contribution.toFixed(1)} points. This is a deterministic rule result, not an ML assessment.</p>
                 </section>
-                <section aria-labelledby="chain-h" className="space-y-3">
-                  <h3 id="chain-h" className="text-sm font-semibold">Evidence chain</h3>
+                <Disclosure summary="Evidence chain: capture to finding, step by step" open>
                   <EvidenceChainView chain={ch} />
-                </section>
+                </Disclosure>
+                <AnalystNotes captureId={activeCaptureId} targetType="finding" targetId={ch.finding.finding_id} />
                 <section className="space-y-1.5">
                   <label className="flex items-center justify-between gap-3 text-sm">
                     <span className="font-semibold">Triage status</span>

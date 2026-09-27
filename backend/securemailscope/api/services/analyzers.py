@@ -20,7 +20,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, Optional, Tuple
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
@@ -277,11 +277,15 @@ class AnalysisService:
         return self.run_analysis(capture, db)
 
     @staticmethod
-    def document(capture: CaptureDB, redact: bool = False) -> Dict[str, Any]:
+    def document(capture: CaptureDB, redact: bool = False, with_annotations: bool = False) -> Dict[str, Any]:
         from securemailscope.reports.redact import raw_label, redact_document
         if capture.analysis_status != "completed" or not capture.document_json:
             raise ServiceError(409, "Analysis is not complete for this capture")
         doc = json.loads(capture.document_json)
+        if with_annotations:
+            selected = annotations_for_report(doc, capture.annotations)
+            if selected:
+                doc["analyst_annotations"] = selected  # redacted below together with the rest
         return redact_document(doc) if redact else raw_label(doc)
 
     def generate_report(self, capture: CaptureDB, fmt: str, db: Session, redact: bool = False) -> ReportDB:
@@ -290,7 +294,7 @@ class AnalysisService:
         if capture.analysis_status != "completed" or not capture.document_json:
             raise ServiceError(409, "Analysis is not complete for this capture")
         render, _ = RENDERERS[fmt]
-        doc = self.document(capture, redact)
+        doc = self.document(capture, redact, with_annotations=True)
         try:
             data = render(doc)
         except ReportUnavailable as e:
@@ -317,6 +321,36 @@ class AnalysisService:
         except ValueError:
             return None
         return p if p.is_file() else None
+
+
+def annotation_target_label(doc: Dict[str, Any], target_type: str, target_id: str) -> Optional[str]:
+    """Human label of an annotation target, or None when it does not exist in this analysis."""
+    if target_type == "capture":
+        return (doc.get("capture") or {}).get("filename") if target_id == (doc.get("capture") or {}).get("capture_id") \
+            else None
+    if target_type == "finding":
+        f = next((f for f in doc.get("findings", []) if f["finding_id"] == target_id), None)
+        return f"{f['rule_id']} {f['title']}" if f else None
+    if target_type == "session":
+        s = next((s for s in doc.get("sessions", []) if s["session_id"] == target_id), None)
+        return (f"{s['protocol']} {s['client']['ip']}:{s['client']['port']} -> {s['server']['ip']}:{s['server']['port']}"
+                if s else None)
+    if target_type == "certificate":
+        c = next((c for c in doc.get("certificates", []) if c.get("fingerprint_sha256") == target_id), None)
+        return f"{c.get('subject')} (SHA-256 {target_id[:16]}...)" if c else None
+    return None
+
+
+def annotations_for_report(doc: Dict[str, Any], annotations) -> List[Dict[str, Any]]:
+    """Annotations the analyst selected for the report, with target labels, oldest first."""
+    out = []
+    for a in sorted(annotations, key=lambda a: (a.created_at is None, a.created_at, a.id)):
+        if not a.include_in_report:
+            continue
+        out.append({"target_type": a.target_type, "target_id": a.target_id,
+                    "target": annotation_target_label(doc, a.target_type, a.target_id) or a.target_id,
+                    "note": a.text, "created_at": a.created_at.isoformat() if a.created_at else None})
+    return out
 
 
 def evidence_chain(doc: Dict[str, Any], finding_id: str) -> Optional[Dict[str, Any]]:

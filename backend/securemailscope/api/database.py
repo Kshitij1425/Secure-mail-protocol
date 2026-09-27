@@ -102,6 +102,7 @@ class CaptureDB(Base):
     certificates = relationship("CertificateDB", back_populates="capture", cascade="all, delete-orphan")
     anomalies = relationship("AnomalyDB", back_populates="capture", cascade="all, delete-orphan")
     reports = relationship("ReportDB", back_populates="capture", cascade="all, delete-orphan")
+    annotations = relationship("AnnotationDB", back_populates="capture", cascade="all, delete-orphan")
 
 
 class SessionDB(Base):
@@ -257,6 +258,25 @@ class ReportDB(Base):
     created_at = Column(DateTime(timezone=True), default=get_utc_now)
 
     capture = relationship("CaptureDB", back_populates="reports")
+
+
+class AnnotationDB(Base):
+    """Analyst note / report selection attached to a capture, finding, session or certificate.
+
+    Analyst metadata only: never changes evidence, findings, severity or the score. Added as a
+    new table (created by ``create_all`` on existing databases; no schema reset needed)."""
+    __tablename__ = "annotations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    capture_id = Column(String(36), ForeignKey("captures.capture_id", ondelete="CASCADE"), nullable=False, index=True)
+    target_type = Column(String(20), nullable=False)       # capture | finding | session | certificate
+    target_id = Column(String(260), nullable=False, index=True)
+    text = Column(Text, nullable=False, default="")
+    include_in_report = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=get_utc_now)
+    updated_at = Column(DateTime(timezone=True), default=get_utc_now, onupdate=get_utc_now)
+
+    capture = relationship("CaptureDB", back_populates="annotations")
 
 
 _engine = None

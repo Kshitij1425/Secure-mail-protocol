@@ -37,9 +37,13 @@ decrypts traffic.
 
 ## Analyst workflow
 
-The dashboard is an investigation workstation with a numbered workflow (Captures -> Overview ->
-Findings -> Sessions -> Certificates -> Timeline -> Anomalies -> Reports) plus *Analyse a
-capture* and *Compare analyses*.
+The dashboard is an investigation workstation with an eight-step workflow: **1 Capture -> 2 Analyze
+-> 3 Posture -> 4 Findings -> 5 Sessions -> 6 Certificates -> 7 Evidence -> 8 Report**, plus
+supporting views (ML anomalies, Compare and trend, About and limitations). Every analysis page
+shows the record under investigation (file, SHA-256, capture time, policy, posture) and links to
+the previous and next step. A finding leads to its session, TLS parameters, certificate,
+evidence frames and recommendation ("Why am I seeing this?"); a session leads back to its
+findings, certificates, timeline and evidence; a certificate leads to its sessions and findings.
 
 * **Policy profiles** - `balanced` (default, identical to earlier releases), `strict`
   (RSA/DH >= 3072, TLS 1.0/1.1 CRITICAL, optional TLS-007) and `legacy_audit` (lower severities
@@ -60,8 +64,18 @@ capture* and *Compare analyses*.
   manifest, no payloads) and STIX 2.1 observations (no indicators). Each can be **raw** or
   **redacted** (consistent pseudonyms for IPs, host names, organisations, e-mail addresses and
   the file name; cryptographic evidence kept).
+* **Evidence register** - one numbered entry per finding with its capture frame, capture time and
+  evidence class, next to the full capture timeline.
+* **Analyst notes and report selection** - notes on a capture, finding, session or certificate;
+  items marked "include in investigation report" appear in Appendix A of the report. Notes never
+  change evidence, findings or the score.
+* **Posture trend** - score, findings and critical/high findings over capture time for analyses
+  that share a mail server with the selected one (association by address, not identity).
+* **Server grouping** - sessions grouped by protocol, address and port with TLS versions, suites
+  and server certificates.
 * Accessibility: skip link, text size (A / A+ / A++), high-contrast mode, keyboard-operable
-  drawers, no horizontal scroll at 390 px.
+  tabs and drawers (focus on open, Esc to close), no horizontal scroll at 390 px.
+  Design rationale: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
 
 The visual design is original. It follows public GIGW 3.0 accessibility conventions; it uses
 no government emblem, seal, logo or branding, and SecureMailScope is **not** affiliated with,
@@ -96,14 +110,16 @@ Exit codes: 0 ok, 2 file missing, 3 not a capture, 4 resource limit, 5 report fo
 `POST /captures/{id}/reports?format=json|html|pdf` · `GET /reports/{id}/download` ·
 `GET /sessions/{id}` · `GET /findings/{id}` · `GET /findings/{id}/chain` · `PATCH /findings/{id}/status` · `GET /certificates/{id}` · `GET /anomalies/{id}` ·
 `GET /captures/{id}/{timeline|certificate-inventory}` · `GET /captures/{id}/{bundle|stix|document}?redact=true|false` ·
-`GET /compare?a=&b=`. Reports accept `redact=true`.
+`GET /compare?a=&b=` · `GET /captures/{id}/trend` · `GET|POST /captures/{id}/annotations` · `PATCH|DELETE /annotations/{id}`.
+Reports accept `redact=true`.
 Interactive docs at `/docs`.
 
 ## Testing
 
 ```powershell
 cd backend
-python -m pytest -q                                  # 376 tests incl. fuzz/property tests
+python -m tests.external_captures.fetch              # optional: download the 5 public validation captures
+python -m pytest -q                                  # 411 tests incl. fuzz/property tests (external ones skip if not downloaded)
 python -m tests.robustness.validate_fixtures         # 28 captures vs ground truth
 $env:HYPOTHESIS_PROFILE="deep"; python -m pytest tests/test_fuzz_properties.py   # long fuzz run
 python -m tests.performance.benchmark --sizes 1000 10000 100000
@@ -111,9 +127,11 @@ python -m tests.performance.benchmark --sizes 1000 10000 100000
 
 The fixture corpus (`backend/tests/robustness/fixture_factory.py`) uses real OpenSSL TLS
 handshakes wrapped in synthesised TCP framing. In addition, `backend/tests/real_captures/`
-holds 9 captures of **real mail server/client sessions generated in a controlled test
-environment** (Mailpit 1.31.2 and aiosmtpd with Python smtplib/poplib clients, recorded by a
-TCP relay: application bytes are real, TCP/IP headers are reconstructed). Provenance and
+holds 15 captures of **real mail server/client sessions generated in a controlled test
+environment** covering SMTP, IMAP and POP3, healthy and weak (Mailpit 1.31.2, aiosmtpd and the
+pymap IMAP server with Python smtplib/poplib/imaplib clients, recorded by a TCP relay:
+application bytes are real, TCP/IP headers are reconstructed). Five independently produced
+public captures (Wireshark wiki) form an external validation layer (`tests/test_external_captures.py`). Provenance and
 intended conditions are in `manifest.json`; `tests/test_real_mail_captures.py` checks them.
 Reproduce with `python lab/real_mail_lab.py` (see [lab/README.md](lab/README.md)). A Docker
 lab with Postfix, Dovecot and tcpdump is provided in `lab/docker/` but was not run here.
@@ -124,6 +142,8 @@ See [LIMITATIONS.md](LIMITATIONS.md).
 | Document | Content |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Pipeline, modules, identifiers, scoring formula |
+| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | Interface research, tokens, components, wording rules |
+| [lab/README.md](lab/README.md) | Real capture lab (SMTP / IMAP / POP3), provenance, external captures |
 | [LIMITATIONS.md](LIMITATIONS.md) | What is not observable / not implemented |
 | [SECURITY_POLICY.md](SECURITY_POLICY.md), [THREAT_MODEL.md](THREAT_MODEL.md) | Deployment and security model |
 | [FINAL_SECURITY_AUDIT.md](FINAL_SECURITY_AUDIT.md) | Audit results and final status |

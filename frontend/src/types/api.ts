@@ -361,3 +361,16 @@ export interface Comparison {
   notes: string[];
   method: string;
 }
+
+export type AnnotationTarget = 'capture' | 'finding' | 'session' | 'certificate';
+export interface Annotation {
+  id: number; capture_id: string; target_type: AnnotationTarget; target_id: string;
+  text: string; include_in_report: boolean; created_at: string | null; updated_at: string | null;
+}
+
+export interface TrendPoint {
+  capture_id: string; filename: string; file_hash: string; policy_profile: string | null;
+  capture_start: string | null; analysis_timestamp: string | null;
+  posture_score: number | null; posture_status: string | null;
+  findings_count: number; severe_findings_count: number; shared_servers: string[]; is_selected: boolean;
+}

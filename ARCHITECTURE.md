@@ -52,7 +52,7 @@ strictly passive: it never contacts a mail server and never decrypts traffic.
 | `policy.py` | Policy profiles (balanced / strict / legacy_audit): key minimums, severity overrides, optional rules | `balanced` equals the pre-profile behaviour (tested) |
 | `reports/` | Canonical document (timeline, certificate inventory, remediation why/effect) + JSON/HTML (Jinja2 autoescape, CSP) / PDF (ReportLab, escaped), 14 sections | Same document for CLI, API and reports |
 | `reports/compare.py`, `redact.py`, `bundle.py`, `stix.py` | Analysis comparison; consistent pseudonymisation; deterministic evidence ZIP with SHA-256 manifest; STIX 2.1 observations | All derived from the stored document; nothing recomputed |
-| `api/` | REST API, persistence, report generation | See SECURITY_POLICY.md |
+| `api/` | REST API, persistence, report generation; analyst annotations (`annotations` table) and posture trend (`/captures/{id}/trend`) | See SECURITY_POLICY.md; annotations are metadata and never change findings or scores |
 | `cli.py` | `securemailscope analyze` | Same pipeline + reports as the API |
 
 ## Identifiers

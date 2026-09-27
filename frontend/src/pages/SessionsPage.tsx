@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useCapture } from '../context/CaptureContext';
-import { getCaptureSessions, getSession, getTimeline } from '../lib/api';
+import { getCaptureSessions, getCertificateInventory, getSession, getTimeline } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock, TabPanel, Tabs } from '../components/ui';
+import { AnalystNotes } from '../components/AnalystNotes';
 import { fmtUtc, shortSession } from '../lib/format';
 
 const yn = (v: boolean | null | undefined) => (v === null || v === undefined ? 'unknown' : v ? 'yes' : 'no');
@@ -18,6 +19,30 @@ export const SessionsPage = () => {
   const list = useAsync(() => getCaptureSessions(activeCaptureId!), activeCaptureId);
   const detail = useAsync(() => getSession(selectedId!), selectedId);
   const tl = useAsync(() => getTimeline(activeCaptureId!, selectedId!), activeCaptureId && selectedId ? `${activeCaptureId}|${selectedId}` : null);
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') === 'servers' ? 'servers' : 'sessions';
+  const setView = (v: string) => setParams((p) => { const n = new URLSearchParams(p); n.set('view', v); n.delete('id'); return n; }, { replace: true });
+  const inv = useAsync(() => getCertificateInventory(activeCaptureId!), view === 'servers' ? activeCaptureId : null);
+
+  /* Association by server address and port only: not an assertion of ownership or identity. */
+  const servers = useMemo(() => {
+    const m = new Map<string, { key: string; protocol: string; addr: string; sessions: number; transitions: Set<string>;
+      versions: Set<string>; suites: Set<string>; withFindings: number; outliers: number }>();
+    for (const x of list.data ?? []) {
+      const addr = `${x.dest_ip}:${x.dest_port}`;
+      const key = `${x.protocol} ${addr}`;
+      const g = m.get(key) ?? { key, protocol: x.protocol, addr, sessions: 0, transitions: new Set<string>(), versions: new Set<string>(),
+        suites: new Set<string>(), withFindings: 0, outliers: 0 };
+      g.sessions += 1;
+      g.transitions.add(x.implicit_tls ? 'implicit TLS' : (x.starttls_state ?? 'unknown').toLowerCase().replace(/_/g, ' '));
+      g.versions.add(x.tls_version ?? 'not observed');
+      if (x.cipher_suite) g.suites.add(x.cipher_suite);
+      g.withFindings += Number(x.has_findings);
+      g.outliers += Number(x.has_anomaly);
+      m.set(key, g);
+    }
+    return [...m.values()].sort((a, b) => b.withFindings - a.withFindings || a.key.localeCompare(b.key));
+  }, [list.data]);
 
   const rows = useMemo(() => {
     const r = (list.data ?? []).filter((s) => (proto === 'all' || s.protocol === proto) &&
@@ -38,6 +63,39 @@ export const SessionsPage = () => {
       <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' },
         { label: 'Sessions', to: '/sessions' }, ...(selectedId ? [{ label: shortSession(selectedId) }] : [])]} />
       <PageTitle title="Email sessions" lead="Reassembled SMTP, IMAP and POP3 connections with what was observable of each TLS negotiation." />
+      <Tabs label="Session views" value={view} onChange={setView}
+        tabs={[{ id: 'sessions', label: `Sessions (${list.data?.length ?? 0})` }, { id: 'servers', label: `Grouped by server (${servers.length})` }]} />
+      {view === 'servers' ? (
+        <TabPanel id="servers">
+          <p className="text-sm text-ink-2">Sessions grouped by server protocol, address and port as seen in this capture. This is an association of observed connections, not an assertion of ownership or identity.</p>
+          <Panel title={`${servers.length} server endpoint(s)`} bodyClass="overflow-x-auto">
+            <StateBlock loading={list.loading} error={list.error} onRetry={list.reload} empty={!list.loading && servers.length === 0}
+              emptyText="No email sessions were found in this capture.">
+              <table className="tbl">
+                <thead><tr><th className="sno">S. No.</th><th>Server</th><th className="num">Sessions</th><th>Transition</th><th>TLS versions</th><th>Cipher suites</th><th>Server certificates</th><th className="num">With findings</th><th className="num">ML</th></tr></thead>
+                <tbody>
+                  {servers.map((g, i) => {
+                    const certs = (inv.data ?? []).filter((c) => c.servers.includes(g.addr) && c.chain_positions.includes(0));
+                    return (
+                      <tr key={g.key}>
+                        <td className="sno">{i + 1}</td>
+                        <td><button type="button" className="link font-mono text-xs text-left" onClick={() => { setQ(g.addr); setProto(g.protocol); setView('sessions'); }}>{g.protocol} {g.addr}</button></td>
+                        <td className="num">{g.sessions}</td>
+                        <td className="text-ink-2">{[...g.transitions].join(', ')}</td>
+                        <td>{[...g.versions].join(', ')}</td>
+                        <td className="font-mono text-xs">{[...g.suites].join(', ') || '-'}</td>
+                        <td className="text-xs">{inv.loading ? 'loading' : certs.length ? certs.map((c) => <Link key={c.fingerprint_sha256} className="link block break-all" to={`/certificates?id=${c.fingerprint_sha256}`}>{c.common_name ?? c.subject}{c.is_expired ? ' (expired)' : ''}</Link>) : <span className="text-ink-3">none observed</span>}</td>
+                        <td className={`num ${g.withFindings ? 'font-semibold' : ''}`}>{g.withFindings}</td>
+                        <td className="num">{g.outliers || ''}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </StateBlock>
+          </Panel>
+        </TabPanel>
+      ) : (<>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 min-w-[16rem] flex-1"><span className="label">Search</span>
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Address, port, cipher or version" className="field" /></label>
@@ -108,6 +166,7 @@ export const SessionsPage = () => {
                 {d.anomaly_id !== null && (
                   <p className="text-sm"><Link to={`/anomalies?id=${d.anomaly_id}`} className="link">ML assessment: {d.has_anomaly ? `outlier (${d.anomaly_level}), requires investigation` : 'consistent with the capture population'}</Link></p>
                 )}
+                <p className="text-sm"><Link to="/evidence" className="link">Evidence register for this capture</Link></p>
                 <section className="space-y-1.5">
                   <h3 className="text-sm font-semibold">Session timeline</h3>
                   <StateBlock loading={tl.loading} error={tl.error}>
@@ -121,11 +180,13 @@ export const SessionsPage = () => {
                     </ol>
                   </StateBlock>
                 </section>
+                <AnalystNotes captureId={activeCaptureId} targetType="session" targetId={d.session_id} />
               </>}
             </StateBlock>
           </Drawer>
         )}
       </div>
+      </>)}
     </>
   );
 };

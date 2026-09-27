@@ -1,10 +1,10 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { useCapture } from '../context/CaptureContext';
-import { getCompare } from '../lib/api';
+import { getCompare, getTrend } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { Breadcrumbs, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
 import { fmtScore, fmtUtc } from '../lib/format';
-import type { CompareFinding, CountDelta } from '../types/api';
+import type { CompareFinding, CountDelta, TrendPoint } from '../types/api';
 
 const delta = (d: number | null) => (d === null ? 'n/a' : d > 0 ? `+${d}` : `${d}`);
 
@@ -36,8 +36,68 @@ const Counts = ({ title, rows }: { title: string; rows: CountDelta[] }) => (
   </Panel>
 );
 
+/** Posture score over capture time for analyses that share a server; points only, no interpolation claims. */
+const TrendChart = ({ points }: { points: TrendPoint[] }) => {
+  const pts = points.filter((p) => p.posture_score !== null);
+  if (pts.length < 2) return <p className="text-sm text-ink-2 px-4 py-3">At least two scored analyses are needed to draw a trend.</p>;
+  const W = 640, H = 190, L = 36, R = 24, T = 26, B = 28;
+  const x = (i: number) => L + (i * (W - L - R)) / (pts.length - 1);
+  const y = (v: number) => T + ((100 - v) * (H - T - B)) / 100;
+  return (
+    <figure className="px-4 py-3">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full max-w-3xl" role="img"
+        aria-label={`Posture score by capture time: ${pts.map((p) => `${p.filename} ${Math.round(p.posture_score!)}`).join(', ')}`}>
+        {[0, 50, 100].map((v) => <g key={v}><line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="rgb(var(--line))" /><text x={L - 6} y={y(v) + 4} textAnchor="end" fontSize="10" fill="rgb(var(--ink-3))">{v}</text></g>)}
+        <polyline fill="none" stroke="rgb(var(--signal))" strokeWidth="2" points={pts.map((p, i) => `${x(i)},${y(p.posture_score!)}`).join(' ')} />
+        {pts.map((p, i) => (
+          <g key={p.capture_id}>
+            <circle cx={x(i)} cy={y(p.posture_score!)} r={p.is_selected ? 6 : 4.5} fill={p.is_selected ? 'rgb(var(--signal))' : 'rgb(var(--panel))'} stroke="rgb(var(--signal))" strokeWidth="2"><title>{`${p.filename}: ${Math.round(p.posture_score!)} (${p.posture_status})`}</title></circle>
+            <text x={x(i)} y={y(p.posture_score!) - 9} textAnchor="middle" fontSize="10" fill="rgb(var(--ink))">{Math.round(p.posture_score!)}</text>
+            <text x={x(i)} y={H - 10} textAnchor="middle" fontSize="10" fill="rgb(var(--ink-3))">{i + 1}</text>
+          </g>
+        ))}
+      </svg>
+      <figcaption className="text-xs text-ink-3">Posture score (0-100) per analysis, ordered by capture time; numbers below the axis refer to the table rows. The filled point is the selected analysis.</figcaption>
+    </figure>
+  );
+};
+
+const Trend = ({ captureId }: { captureId: string }) => {
+  const t = useAsync(() => getTrend(captureId), captureId);
+  return (
+    <Panel title="Posture trend for servers in the selected analysis" bodyClass="">
+      <StateBlock loading={t.loading} error={t.error} onRetry={t.reload} empty={!!t.data && t.data.length === 0}
+        emptyText="The selected analysis has no email sessions to relate to other analyses.">
+        {t.data && <>
+          <TrendChart points={t.data} />
+          <div className="overflow-x-auto">
+            <table className="tbl">
+              <thead><tr><th className="sno">S. No.</th><th>Captured (UTC)</th><th>Analysis</th><th>Policy</th><th className="num">Score</th><th className="num">Findings</th><th className="num">Critical + high</th><th>Shared servers</th></tr></thead>
+              <tbody>
+                {t.data.map((p, i) => (
+                  <tr key={p.capture_id} aria-current={p.is_selected ? 'true' : undefined} className={p.is_selected ? 'bg-signal-soft' : ''}>
+                    <td className="sno">{i + 1}</td>
+                    <td className="whitespace-nowrap tabular-nums">{fmtUtc(p.capture_start)}</td>
+                    <td className="break-all">{p.filename}{p.is_selected && <span className="text-xs text-ink-3"> (selected)</span>}<div className="text-xs font-mono text-ink-3">{p.file_hash.slice(0, 12)}</div></td>
+                    <td>{p.policy_profile}</td>
+                    <td className="num font-semibold">{fmtScore(p.posture_score)}</td>
+                    <td className="num">{p.findings_count}</td>
+                    <td className="num">{p.severe_findings_count}</td>
+                    <td className="font-mono text-xs">{p.shared_servers.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-ink-3 px-3 py-2">Analyses are related when they share at least one mail server (protocol, address and port). This is an association by address, not proof of identity. Re-analyses of the same file (same SHA-256) appear separately and may use different policy profiles, so score changes can reflect policy rather than configuration.</p>
+        </>}
+      </StateBlock>
+    </Panel>
+  );
+};
+
 export const ComparePage = () => {
-  const { captures } = useCapture();
+  const { captures, activeCaptureId } = useCapture();
   const [params, setParams] = useSearchParams();
   const a = params.get('a') ?? '';
   const b = params.get('b') ?? '';
@@ -48,8 +108,10 @@ export const ComparePage = () => {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: 'Compare analyses' }]} />
-      <PageTitle title="Compare analyses" lead="Differences between two stored analyses, for example before and after remediation. Findings are matched by rule and server (protocol, address, port). Nothing is recomputed or estimated." />
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: 'Compare and trend' }]} />
+      <PageTitle title="Compare and trend" lead="Differences between two stored analyses, for example before and after remediation, and the posture history of the servers in the selected analysis. Findings are matched by rule and server (protocol, address, port). Nothing is recomputed or estimated." />
+      {activeCaptureId && <Trend captureId={activeCaptureId} />}
+      <h2 className="text-lg pt-2">Compare two analyses</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {(['a', 'b'] as const).map((k) => (
           <label key={k} className="flex flex-col gap-1"><span className="label">{k === 'a' ? 'A: baseline (earlier)' : 'B: comparison (later)'}</span>

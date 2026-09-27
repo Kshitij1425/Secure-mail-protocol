@@ -43,4 +43,10 @@ for the state found at takeover).
 | - | Redaction, evidence bundle, STIX 2.1 | Not present | `reports/redact.py`, `bundle.py`, `stix.py` | yes | yes | downloads verified | WORKING |
 | - | 14-section report | 10 sections | `report.html.j2`, `render.py` | `test_html_sections_present` | CLI | yes | WORKING |
 
-Totals: 37 capability rows - 35 WORKING, 1 PARTIAL (trust anchors, by design), 1 UNVERIFIED (Docker; the Docker mail lab was not run either).
+| - | Real IMAP captures (pymap: IMAPS, STARTTLS, weak, plaintext) and weak POP3S | Not present | `lab/imap_server.py`, `lab/real_mail_lab.py` | - | `test_real_mail_captures.py` (36) | - | WORKING |
+| - | External public captures (Wireshark wiki, 5) | Not present | `tests/external_captures/` | - | `test_external_captures.py` (10) | - | WORKING |
+| - | 8-step workflow, case bar, step pager, evidence register, server grouping | Not present | `frontend/src` | tsc + oxlint | - | 80-check walkthrough | WORKING |
+| - | Analyst notes / report selection, posture trend | Not present | `annotations` table, `/trend` | `test_analyst_features.py` | - | yes | WORKING |
+| - | PDF report with the same 14 sections | 10 sections | `reports/render.py` | pypdf test | - | - | WORKING |
+
+Totals: 42 capability rows - 40 WORKING, 1 PARTIAL (trust anchors, by design), 1 UNVERIFIED (Docker; the Docker mail lab was not run either).

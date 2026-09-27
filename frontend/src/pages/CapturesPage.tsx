@@ -40,13 +40,13 @@ export const CapturesPage = () => {
         lead="Every stored analysis, newest first. Open one to investigate it, re-analyse the same evidence under another policy profile, or select two to compare."
         actions={<>
           <button type="button" className="btn" disabled={picked.length !== 2} onClick={() => navigate(`/compare?a=${picked[0]}&b=${picked[1]}`)}>Compare selected ({picked.length}/2)</button>
-          <Link to="/upload" className="btn-primary">Analyse a capture</Link>
+          <Link to="/upload" className="btn-primary">Step 2: Analyze a capture</Link>
         </>} />
       {msg && <p role="status" className="notice">{msg}</p>}
       <Panel title={`${captures.length} analysis record(s)`} bodyClass="overflow-x-auto">
         <StateBlock loading={loading && captures.length === 0} error={error} onRetry={() => void refreshCaptures()}
           empty={!loading && captures.length === 0} emptyText="No captures have been analysed yet."
-          emptyAction={<Link to="/upload" className="btn-primary">Analyse a capture</Link>}>
+          emptyAction={<Link to="/upload" className="btn-primary">Analyze a capture</Link>}>
           <table className="tbl">
             <thead><tr><th><span className="sr-only">Select for comparison</span></th><th>Capture</th><th>Policy</th><th>Posture</th><th>Contents</th><th>Findings</th><th className="num">ML</th><th>Actions</th></tr></thead>
             <tbody>

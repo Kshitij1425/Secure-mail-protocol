@@ -3,9 +3,9 @@ Pydantic response models. Every endpoint's response is validated against these,
 so the documented schema and the actual payload cannot drift apart.
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _ORM(BaseModel):
@@ -262,3 +262,42 @@ class ReportSummary(_ORM):
     sha256: Optional[str]
     redacted: bool = False
     created_at: Optional[datetime]
+
+
+class AnnotationCreate(BaseModel):
+    target_type: Literal["capture", "finding", "session", "certificate"]
+    target_id: str = Field(min_length=1, max_length=260)
+    text: str = Field(default="", max_length=4000)
+    include_in_report: bool = False
+
+
+class AnnotationUpdate(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=4000)
+    include_in_report: Optional[bool] = None
+
+
+class AnnotationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    capture_id: str
+    target_type: str
+    target_id: str
+    text: str
+    include_in_report: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class TrendPoint(BaseModel):
+    capture_id: str
+    filename: str
+    file_hash: str
+    policy_profile: Optional[str] = None
+    capture_start: Optional[str] = None
+    analysis_timestamp: Optional[datetime] = None
+    posture_score: Optional[float] = None
+    posture_status: Optional[str] = None
+    findings_count: int
+    severe_findings_count: int
+    shared_servers: List[str]
+    is_selected: bool

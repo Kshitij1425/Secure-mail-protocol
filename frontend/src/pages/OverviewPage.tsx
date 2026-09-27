@@ -4,6 +4,7 @@ import { getCapture, getCaptureAnomalies, getCaptureSessions, getPosture } from 
 import { useAsync } from '../hooks/useAsync';
 import { DimensionBars, SeverityDistribution } from '../components/charts';
 import { Breadcrumbs, Mono, NeedCapture, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
+import { AnalystNotes } from '../components/AnalystNotes';
 import { fmtScore, fmtUtc, shortSession } from '../lib/format';
 
 const STATUS_NOTE: Record<string, string> = {
@@ -32,12 +33,12 @@ export const OverviewPage = () => {
 
   return (
     <>
-      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: c?.filename ?? 'Analysis' }, { label: 'Overview' }]} />
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: c?.filename ?? 'Analysis' }, { label: 'Posture' }]} />
       <StateBlock loading={cap.loading && !c} error={cap.error} onRetry={cap.reload}>
         {c && <>
-          <PageTitle title={c.filename}
-            lead={<>Captured {fmtUtc(c.capture_start)} to {fmtUtc(c.capture_end)}. Analysed {fmtUtc(c.analysis_timestamp)} in {c.analysis_duration_seconds?.toFixed(2) ?? '-'} s with the <strong>{c.policy_profile ?? 'balanced'}</strong> policy profile.</>}
-            actions={<><Link to="/findings" className="btn">Review findings</Link><Link to="/reports" className="btn-primary">Reports and export</Link></>} />
+          <PageTitle title="Security posture"
+            lead={<>{c.filename}: captured {fmtUtc(c.capture_start)} to {fmtUtc(c.capture_end)}. Analysed {fmtUtc(c.analysis_timestamp)} in {c.analysis_duration_seconds?.toFixed(2) ?? '-'} s with the <strong>{c.policy_profile ?? 'balanced'}</strong> policy profile.</>}
+            actions={<><Link to="/findings" className="btn">Review findings</Link><Link to="/reports" className="btn-primary">Report and export</Link></>} />
 
           {c.analysis_status !== 'completed' ? (
             <div role="alert" className="notice">Analysis status: {c.analysis_status}{c.analysis_error ? `. ${c.analysis_error}` : ''}</div>
@@ -81,7 +82,7 @@ export const OverviewPage = () => {
                   <li><span className="text-ink-3">ML stage</span> {c.ml_status ?? 'not run'} ({c.ml_engine_version ?? 'n/a'})</li>
                   <li><span className="text-ink-3">Completed</span> {fmtUtc(c.analysis_timestamp)}</li>
                 </ol>
-                <Link to="/timeline" className="link text-sm mt-3 inline-block">Open the capture timeline</Link>
+                <Link to="/evidence" className="link text-sm mt-3 inline-block">Open the evidence register</Link>
               </Panel>
             </div>
           )}
@@ -115,10 +116,10 @@ export const OverviewPage = () => {
             </StateBlock>
           </Panel>
 
-          <Panel title="Sessions that differ from the capture population (ML)" actions={<Link to="/anomalies" className="link text-sm">Anomalies</Link>} bodyClass="">
+          <Panel title="Anomalous security configurations (ML, supplementary)" actions={<Link to="/anomalies" className="link text-sm">ML anomalies</Link>} bodyClass="">
             <StateBlock loading={anomalies.loading} error={anomalies.error}
               empty={!anomalies.loading && outliers.length === 0}
-              emptyText={c?.ml_status?.startsWith('insufficient') ? 'Too few TLS sessions for anomaly detection in this capture.' : 'No statistical outliers.'}>
+              emptyText={c?.ml_status?.startsWith('insufficient') ? 'Too few TLS sessions for anomaly detection in this capture.' : 'No session is weaker than, and unusual relative to, this capture baseline.'}>
               <table className="tbl">
                 <thead><tr><th>Session</th><th>Level</th><th className="num">Score</th></tr></thead>
                 <tbody>
@@ -131,8 +132,12 @@ export const OverviewPage = () => {
                   ))}
                 </tbody>
               </table>
-              <p className="text-xs text-ink-3 px-3 py-2">Outliers require investigation; they are not confirmed vulnerabilities.</p>
+              <p className="text-xs text-ink-3 px-3 py-2">Unusual relative to the capture baseline; requires investigation. Not a finding, attack or compromise verdict.</p>
             </StateBlock>
+          </Panel>
+
+          <Panel title="Investigation notes for this capture">
+            <AnalystNotes captureId={activeCaptureId} targetType="capture" targetId={activeCaptureId} />
           </Panel>
         </div>
       )}

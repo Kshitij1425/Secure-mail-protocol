@@ -27,6 +27,7 @@ dev = [
     "bandit>=1.7",
     "pip-audit>=2.7",
     "stix2>=3.0",  # validates the STIX 2.1 export in tests only
+    "pypdf>=5",    # reads generated PDF reports in tests only
 ]
 # Only needed to regenerate test fixtures (tests/robustness/fixture_factory.py uses the
 # stdlib ssl module + cryptography; no extra packages are required today).
