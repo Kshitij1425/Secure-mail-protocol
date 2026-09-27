@@ -65,6 +65,66 @@ def _finding_keys(doc: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, Any]]:
     return out
 
 
+def _anomalous_sessions(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """ML-flagged sessions with the security properties an analyst needs to judge them."""
+    sess = {s["session_id"]: s for s in doc.get("sessions", [])}
+    leaf = {c["session_id"]: c for c in doc.get("certificates", []) if c.get("chain_position") == 0}
+    out = []
+    for a in doc.get("anomalies", []):
+        s = sess.get(a["session_id"])
+        if not a.get("is_anomaly") or not s:
+            continue
+        t = s.get("tls") or {}
+        c = leaf.get(s["session_id"])
+        out.append({
+            "session_id": s["session_id"], "stream_id": s["stream_id"], "asset": _asset(s), "protocol": s["protocol"],
+            "client": f"{s['client']['ip']}:{s['client']['port']}", "server": f"{s['server']['ip']}:{s['server']['port']}",
+            "anomaly_level": a.get("anomaly_level"), "anomaly_score": a.get("anomaly_score"),
+            "explanation": a.get("explanation"),
+            "properties": {
+                "tls_version": t.get("negotiated_version"), "cipher_suite": t.get("cipher_suite"),
+                "forward_secrecy": t.get("forward_secrecy"),
+                "certificate_key": f"{c['public_key_algorithm']} {c['public_key_size_bits']}" if c else None,
+                "certificate_expired": c.get("is_expired") if c else None,
+            },
+        })
+    return out
+
+
+def compare_anomalies(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """New / resolved / persisting ML-anomalous sessions between two analyses.
+
+    A session is matched first as the *same session* (same client and server endpoints, e.g. the
+    same file re-analysed), otherwise by *same server* (protocol, address, port), the key used for
+    findings. ML results are relative to each capture's own norm, so a change can also reflect a
+    different session population rather than a configuration change."""
+    xa, xb = _anomalous_sessions(a), _anomalous_sessions(b)
+    streams_a = {s["stream_id"] for s in a.get("sessions", [])}
+    streams_b = {s["stream_id"] for s in b.get("sessions", [])}
+    assets_a = {_asset(s) for s in a.get("sessions", [])}
+    assets_b = {_asset(s) for s in b.get("sessions", [])}
+    left = list(xa)
+    persisting, new = [], []
+    for eb in xb:
+        match = next((ea for ea in left if ea["stream_id"] == eb["stream_id"]), None)
+        basis = "same session"
+        if match is None:
+            match = next((ea for ea in left if ea["asset"] == eb["asset"]), None)
+            basis = "same server"
+        if match is not None:
+            left.remove(match)
+            persisting.append({"match": basis, "asset": eb["asset"], "a": match, "b": eb})
+        else:
+            other = ("session present, not anomalous" if eb["stream_id"] in streams_a
+                     else "server present, not anomalous" if eb["asset"] in assets_a else "not observed")
+            new.append({**eb, "in_other": other})
+    resolved = [{**ea, "in_other": "session present, not anomalous" if ea["stream_id"] in streams_b
+                 else "server present, not anomalous" if ea["asset"] in assets_b else "not observed"} for ea in left]
+    key = lambda e: (e.get("asset", ""), e.get("session_id", ""))
+    return {"new": sorted(new, key=key), "resolved": sorted(resolved, key=key),
+            "persisting": sorted(persisting, key=lambda e: e["asset"])}
+
+
 def _counts(d: Dict[str, int], e: Dict[str, int]) -> List[Dict[str, Any]]:
     return [{"key": k, "a": d.get(k, 0), "b": e.get(k, 0), "delta": e.get(k, 0) - d.get(k, 0)}
             for k in sorted(set(d) | set(e))]
@@ -129,7 +189,9 @@ def compare_documents(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         "protocols": _counts({k: v["sessions"] for k, v in a.get("protocol_summary", {}).items()},
                              {k: v["sessions"] for k, v in b.get("protocol_summary", {}).items()}),
         "anomalies": {"a": pa["anomalies"], "b": pb["anomalies"], "delta": pb["anomalies"] - pa["anomalies"]},
+        "anomaly_sessions": compare_anomalies(a, b),
         "notes": notes,
-        "method": "Findings are matched by rule and asset (protocol, server address and port). Scores come from each "
-                  "stored analysis; nothing is recomputed.",
+        "method": "Findings are matched by rule and asset (protocol, server address and port). ML-anomalous sessions are "
+                  "matched as the same session (same endpoints) or else the same server. Scores and ML results come from "
+                  "each stored analysis; nothing is recomputed. ML results are relative to each capture's own norm.",
     }

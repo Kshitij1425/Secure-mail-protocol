@@ -151,7 +151,7 @@ class RecordingRelay:
                 recs = sorted(conn.records, key=lambda r: r.ts)
             tls_started = False
             for r in recs:
-                if r.data[:1] == b"" and r.data[1:2] == b"":
+                if r.data[:1] == b"\x16" and r.data[1:2] == b"\x03":
                     tls_started = True
                 if not tls_started and r.data:
                     for old, new in self.substitutions:

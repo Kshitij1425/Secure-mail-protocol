@@ -22,7 +22,7 @@
   --line-strong: 184 193 206;
   --ink: 22 32 46;            /* #16202E */
   --ink-2: 70 84 104;
-  --ink-3: 104 118 138;
+  --ink-3: 90 103 123;       /* #5A677B: >= 4.8:1 on every surface (axe colour-contrast) */
   --chrome: 19 35 63;         /* #13233F application band */
   --chrome-2: 12 24 45;
   --chrome-ink: 232 237 245;

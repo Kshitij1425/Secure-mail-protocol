@@ -358,6 +358,7 @@ export interface Comparison {
   assets: CompareAsset[];
   tls_versions: CountDelta[]; cipher_suites: CountDelta[]; protocols: CountDelta[];
   anomalies: { a: number; b: number; delta: number };
+  anomaly_sessions: { new: AnomalySessionChange[]; resolved: AnomalySessionChange[]; persisting: AnomalySessionPair[] };
   notes: string[];
   method: string;
 }
@@ -374,3 +375,12 @@ export interface TrendPoint {
   posture_score: number | null; posture_status: string | null;
   findings_count: number; severe_findings_count: number; shared_servers: string[]; is_selected: boolean;
 }
+
+export interface AnomalySession {
+  session_id: string; stream_id: string; asset: string; protocol: string; client: string; server: string;
+  anomaly_level: string; anomaly_score: number; explanation: string;
+  properties: { tls_version: string | null; cipher_suite: string | null; forward_secrecy: boolean | null;
+    certificate_key: string | null; certificate_expired: boolean | null };
+}
+export interface AnomalySessionChange extends AnomalySession { in_other: string }
+export interface AnomalySessionPair { match: string; asset: string; a: AnomalySession; b: AnomalySession }

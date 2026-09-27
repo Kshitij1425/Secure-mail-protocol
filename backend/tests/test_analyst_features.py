@@ -346,3 +346,67 @@ def test_hostile_note_text_is_escaped_in_reports(client):
     assert payload not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     rep = client.post(f"/captures/{cid}/reports", params={"format": "pdf"}).json()
     assert client.get(f"/reports/{rep['report_id']}/download").content.startswith(b"%PDF")
+
+
+# ------------------------------------------------------------------ compare: per-session ML anomaly changes
+FIXTURES = Path(__file__).parent / "robustness" / "fixtures" / "pcaps"
+
+
+def up_fixture(client, name, policy="balanced"):
+    r = client.post("/analyze", files={"file": (name, (FIXTURES / name).read_bytes())}, data={"policy": policy})
+    assert r.status_code == 200, r.text
+    return r.json()["capture_id"]
+
+
+def test_compare_lists_anomalous_sessions_new_resolved_persisting(client):
+    mixed = up_fixture(client, "ml_mixed_estate.pcap")          # 1 ML-anomalous session (legacy TLS 1.0 server)
+    mixed_again = up_fixture(client, "ml_mixed_estate.pcap")    # same file re-analysed
+    clean = up(client, "real_remediation_after.pcap")          # different system, no anomaly
+
+    same = client.get("/compare", params={"a": mixed, "b": mixed_again}).json()["anomaly_sessions"]
+    assert len(same["persisting"]) == 1 and not same["new"] and not same["resolved"]
+    p = same["persisting"][0]
+    assert p["match"] == "same session" and p["a"]["stream_id"] == p["b"]["stream_id"]
+    b = p["b"]
+    assert b["protocol"] == "SMTP" and b["server"].endswith(":25") and b["anomaly_level"] in ("mild", "moderate", "severe")
+    assert b["properties"]["tls_version"] == "TLSv1.0" and b["properties"]["certificate_key"] == "RSA 1024"
+    assert "Weaker than this capture's norm" in b["explanation"]
+
+    gone = client.get("/compare", params={"a": mixed, "b": clean}).json()["anomaly_sessions"]
+    assert len(gone["resolved"]) == 1 and not gone["new"] and not gone["persisting"]
+    assert gone["resolved"][0]["in_other"] == "not observed"
+
+    appeared = client.get("/compare", params={"a": clean, "b": mixed}).json()["anomaly_sessions"]
+    assert len(appeared["new"]) == 1 and appeared["new"][0]["in_other"] == "not observed"
+    # the count summary stays consistent with the per-session lists
+    full = client.get("/compare", params={"a": clean, "b": mixed}).json()
+    assert full["anomalies"]["delta"] == len(appeared["new"]) - len(appeared["resolved"])
+
+
+# ------------------------------------------------------------------ report preview
+def test_report_preview_is_the_real_report(client):
+    cid = up(client, "real_remediation_before.pcap", policy="strict")
+    pv = client.get(f"/captures/{cid}/report-preview").json()
+    titles = [s["title"] for s in pv["sections"]]
+    assert [s["number"] for s in pv["sections"]] == [str(i) for i in range(1, 15)]
+    assert titles[0] == "Executive summary" and titles[-1] == "Integrity"
+    assert pv["mode"] == "RAW" and pv["policy_profile"] == "strict"
+    cap = client.get(f"/captures/{cid}").json()
+    assert pv["score"] == cap["posture_score"] and pv["findings"] == cap["findings_count"]
+    assert pv["capture_sha256"] == cap["file_hash"] and "10.77.0.50" in pv["html"]
+    # byte-identical to the HTML report a download produces
+    rep = client.post(f"/captures/{cid}/reports", params={"format": "html"}).json()
+    assert client.get(f"/reports/{rep['report_id']}/download").content.decode("utf-8") == pv["html"]
+    assert rep["sha256"] == pv["sha256"]
+
+
+def test_report_preview_redacted_and_with_analyst_appendix(client):
+    cid = up(client, "real_remediation_before.pcap")
+    red = client.get(f"/captures/{cid}/report-preview", params={"redact": True}).json()
+    assert red["mode"] == "REDACTED" and "10.77.0.50" not in red["html"] and red["filename"] != "real_remediation_before.pcap"
+    assert not any(s["number"] == "A" for s in red["sections"])
+    client.post(f"/captures/{cid}/annotations", json={"target_type": "capture", "target_id": cid,
+                "text": "Include me", "include_in_report": True})
+    pv = client.get(f"/captures/{cid}/report-preview").json()
+    assert pv["sections"][-1]["number"] == "A" and pv["selected_annotations"] == 1 and "Include me" in pv["html"]
+    assert client.get("/captures/nope/report-preview").status_code == 404

@@ -4,7 +4,9 @@ FastAPI application for SecureMailScope.
 All handlers are synchronous (``def``) so FastAPI runs them in its worker thread
 pool: CPU-bound analysis never blocks the event loop.
 """
+import hashlib
 import json
+import re
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -371,6 +373,31 @@ def _download_stem(c, redact: bool) -> str:
     if redact:
         return f"capture_{(c.file_hash or 'unknown')[:12]}"
     return safe_report_basename(c.filename)
+
+
+# ------------------------------------------------------------------ report preview
+_SECTION = re.compile(r'<h2 id="(s[0-9A]+)"><span>([0-9A]+)</span>(.*?)</h2>', re.S)
+
+
+@app.get("/captures/{capture_id}/report-preview")
+def report_preview(capture_id: str, redact: bool = False, db: Session = Depends(get_db)):
+    """The HTML report exactly as a download would produce it (same document, redaction and analyst
+    selections), plus its section list, for in-app review before downloading."""
+    from securemailscope.reports.render import render_html
+    c = _capture_or_404(db, capture_id)
+    try:
+        doc = service.document(c, redact, with_annotations=True)
+    except ServiceError as e:
+        _svc(e)
+    html_bytes = render_html(doc)
+    html = html_bytes.decode("utf-8")
+    sections = [{"anchor": a, "number": n, "title": re.sub(r"<[^>]+>", "", t).strip()} for a, n, t in _SECTION.findall(html)]
+    return {"html": html, "sha256": hashlib.sha256(html_bytes).hexdigest(), "sections": sections,
+            "mode": (doc.get("redaction") or {}).get("mode", "RAW"),
+            "policy_profile": doc["analysis"].get("policy_profile"), "score": doc["posture"].get("overall_score"),
+            "status": doc["posture"].get("status"), "findings": len(doc.get("findings", [])),
+            "capture_sha256": doc["capture"].get("sha256"), "filename": doc["capture"].get("filename"),
+            "selected_annotations": len(doc.get("analyst_annotations") or [])}
 
 
 # ------------------------------------------------------------------ analyst annotations

@@ -18,7 +18,10 @@ export const AnalystNotes = ({ captureId, targetType, targetId }: {
   const [include, setInclude] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const selected = (notes.data ?? []).some((n) => n.include_in_report);
+  // Optimistic value of each note's "include in report" box while its update is in flight.
+  const [pending, setPending] = useState<Record<number, boolean>>({});
+  const included = (id: number, server: boolean) => pending[id] ?? server;
+  const selected = (notes.data ?? []).some((n) => included(n.id, n.include_in_report));
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -32,6 +35,18 @@ export const AnalystNotes = ({ captureId, targetType, targetId }: {
       setBusy(false);
     }
   };
+  const toggle = async (id: number, value: boolean) => {
+    setPending((p) => ({ ...p, [id]: value }));
+    setErr(null);
+    try {
+      await updateAnnotation(id, { include_in_report: value });
+      notes.reload(); // once reloaded, the server value equals the optimistic one
+    } catch (e) {
+      setPending((p) => { const n = { ...p }; delete n[id]; return n; });
+      setErr(errorMessage(e, 'Could not update the report selection'));
+    }
+  };
+
   const add = () => run(async () => {
     await createAnnotation(captureId, { target_type: targetType, target_id: targetId, text, include_in_report: include });
     setText('');
@@ -54,8 +69,8 @@ export const AnalystNotes = ({ captureId, targetType, targetId }: {
               <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-3">
                 <span>{fmtUtc(n.created_at)}</span>
                 <label className="inline-flex items-center gap-1.5">
-                  <input type="checkbox" checked={n.include_in_report} disabled={busy}
-                    onChange={(e) => void run(() => updateAnnotation(n.id, { include_in_report: e.target.checked }))} />
+                  <input type="checkbox" checked={included(n.id, n.include_in_report)} disabled={pending[n.id] !== undefined && pending[n.id] !== n.include_in_report}
+                    onChange={(e) => void toggle(n.id, e.target.checked)} />
                   Include in investigation report
                 </label>
                 <button type="button" className="inline-flex items-center gap-1 hover:text-sev-high" disabled={busy}

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useCapture } from '../context/CaptureContext';
-import { bundleUrl, createReport, download, errorMessage, getAnnotations, getReports, reportDownloadUrl, stixUrl } from '../lib/api';
+import { bundleUrl, createReport, download, errorMessage, getAnnotations, getReportPreview, getReports, reportDownloadUrl, stixUrl } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
-import { Breadcrumbs, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
-import { fmtUtc } from '../lib/format';
+import { Breadcrumbs, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { fmtScore, fmtUtc } from '../lib/format';
 
 export const ReportsPage = () => {
   const { activeCaptureId, activeCapture } = useCapture();
@@ -13,6 +13,10 @@ export const ReportsPage = () => {
   const reports = useAsync(() => getReports(activeCaptureId!), activeCaptureId);
   const notes = useAsync(() => getAnnotations(activeCaptureId!), activeCaptureId);
   const selected = (notes.data ?? []).filter((n) => n.include_in_report).length;
+  const [previewOn, setPreviewOn] = useState(false);
+  const preview = useAsync(() => getReportPreview(activeCaptureId!, redact), previewOn && activeCaptureId ? `${activeCaptureId}|${redact}` : null);
+  const frame = useRef<HTMLIFrameElement>(null);
+  const jump = (anchor: string) => frame.current?.contentDocument?.getElementById(anchor)?.scrollIntoView({ block: 'start' });
   if (!activeCaptureId) return <NeedCapture />;
   const ready = activeCapture?.analysis_status === 'completed';
 
@@ -35,7 +39,7 @@ export const ReportsPage = () => {
       <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' }, { label: 'Report' }]} />
       <PageTitle title="Report and export" lead="Every output is generated from the stored analysis and records the capture SHA-256, analysis time, tool version and policy profile." />
 
-      <Panel title="Output mode">
+      <Panel title="1. Output mode">
         <fieldset className="space-y-2 text-sm">
           <legend className="sr-only">Output mode</legend>
           <label className="flex items-start gap-2"><input type="radio" name="mode" checked={!redact} onChange={() => setRedact(false)} className="mt-1" />
@@ -46,8 +50,46 @@ export const ReportsPage = () => {
         </fieldset>
       </Panel>
 
+      <Panel title={`2. Preview the ${redact ? 'redacted' : 'raw'} report`}
+        actions={previewOn ? <button type="button" className="btn" onClick={() => setPreviewOn(false)}>Close preview</button> : undefined}>
+        {!previewOn ? (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <button type="button" className="btn-primary" disabled={!ready} onClick={() => setPreviewOn(true)}>Preview report</button>
+            <span className="text-ink-2">Shows the HTML report exactly as it will be downloaded, before any file is written.</span>
+          </div>
+        ) : (
+          <StateBlock loading={preview.loading} error={preview.error} onRetry={preview.reload}>
+            {preview.data && (
+              <div className="grid grid-cols-1 xl:grid-cols-[16rem_minmax(0,1fr)] gap-4">
+                <div className="space-y-3 text-sm">
+                  <KV rows={[
+                    { k: 'Mode', v: <strong>{preview.data.mode === 'REDACTED' ? 'Redacted' : 'Raw'}</strong> },
+                    { k: 'Policy', v: preview.data.policy_profile },
+                    { k: 'Posture', v: `${fmtScore(preview.data.score)} / 100 (${preview.data.status})` },
+                    { k: 'Findings', v: preview.data.findings },
+                    { k: 'Appendix A', v: preview.data.selected_annotations ? `${preview.data.selected_annotations} selected item(s)` : 'none' },
+                    { k: 'Capture', v: <Mono>{preview.data.capture_sha256.slice(0, 16)}...</Mono> },
+                  ]} />
+                  <nav aria-label="Report sections">
+                    <div className="label mb-1">Sections</div>
+                    <ol className="space-y-0.5">
+                      {preview.data.sections.map((sec) => (
+                        <li key={sec.anchor}><button type="button" className="link text-left text-sm py-1 inline-block min-h-[24px]" onClick={() => jump(sec.anchor)}>{sec.number}. {sec.title}</button></li>
+                      ))}
+                    </ol>
+                  </nav>
+                </div>
+                <iframe ref={frame} title={`Report preview (${preview.data.mode === 'REDACTED' ? 'redacted' : 'raw'})`}
+                  sandbox="allow-same-origin" srcDoc={preview.data.html}
+                  className="w-full h-[70vh] min-h-[28rem] border border-line rounded bg-white" />
+              </div>
+            )}
+          </StateBlock>
+        )}
+      </Panel>
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <Panel title="Forensic report">
+        <Panel title="3. Download the forensic report">
           <p className="text-sm text-ink-2 mb-3">Fourteen sections from executive summary to integrity information, identical in JSON, HTML and PDF. JSON is the canonical machine-readable document.</p>
           <p className="text-sm mb-3">{notes.loading ? 'Checking analyst selections' : selected
             ? <>Appendix A will contain <strong>{selected}</strong> item(s) you selected for the investigation report.</>

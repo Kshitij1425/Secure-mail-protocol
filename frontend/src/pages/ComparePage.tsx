@@ -2,9 +2,9 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useCapture } from '../context/CaptureContext';
 import { getCompare, getTrend } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
-import { Breadcrumbs, PageTitle, Panel, Severity, StateBlock } from '../components/ui';
+import { Breadcrumbs, EvidenceTag, PageTitle, Panel, ScrollBody, Severity, StateBlock } from '../components/ui';
 import { fmtScore, fmtUtc } from '../lib/format';
-import type { CompareFinding, CountDelta, TrendPoint } from '../types/api';
+import type { AnomalySession, AnomalySessionChange, AnomalySessionPair, CompareFinding, CountDelta, TrendPoint } from '../types/api';
 
 const delta = (d: number | null) => (d === null ? 'n/a' : d > 0 ? `+${d}` : `${d}`);
 
@@ -26,6 +26,49 @@ const FindingTable = ({ rows, side, empty }: { rows: CompareFinding[]; side: 'a'
       </tbody>
     </table>
   ));
+
+const props = (x: AnomalySession) => [
+  x.properties.tls_version ?? 'TLS not observed',
+  x.properties.cipher_suite,
+  x.properties.forward_secrecy === false ? 'no forward secrecy' : null,
+  x.properties.certificate_key ? `certificate ${x.properties.certificate_key}${x.properties.certificate_expired ? ', expired' : ''}` : null,
+].filter(Boolean).join(' · ');
+
+const SessionCell = ({ x, side }: { x: AnomalySession; side?: string }) => (
+  <div className="space-y-0.5">
+    {side && <div className="text-xs text-ink-3">{side}</div>}
+    <div><Link className="link font-mono text-xs" to={`/sessions?id=${encodeURIComponent(x.session_id)}`} title="Opens the session in the currently selected analysis if it belongs to it">{x.client} to {x.server}</Link></div>
+    <div className="text-xs text-ink-2">{props(x)}</div>
+  </div>
+);
+
+const AnomalyChangeTable = ({ rows, empty }: { rows: AnomalySessionChange[]; empty: string }) => (
+  rows.length === 0 ? <p className="text-sm text-ink-2 px-4 py-3">{empty}</p> : (
+    <table className="tbl">
+      <thead><tr><th>Session (protocol)</th><th>Level</th><th>Why it differs (model explanation)</th><th>In the other analysis</th></tr></thead>
+      <tbody>{rows.map((x) => (
+        <tr key={x.session_id}>
+          <td><div className="text-xs text-ink-3">{x.protocol}</div><SessionCell x={x} /></td>
+          <td className="whitespace-nowrap"><EvidenceTag value="ML_ANOMALY" /> <span className="text-sm">{x.anomaly_level}</span><div className="text-xs text-ink-3 tabular-nums">score {x.anomaly_score.toFixed(3)}</div></td>
+          <td className="text-sm text-ink-2 min-w-[18rem]">{x.explanation}</td>
+          <td className="text-sm">{x.in_other}</td>
+        </tr>))}
+      </tbody>
+    </table>));
+
+const AnomalyPairTable = ({ rows }: { rows: AnomalySessionPair[] }) => (
+  rows.length === 0 ? <p className="text-sm text-ink-2 px-4 py-3">No ML-anomalous session persists across both analyses.</p> : (
+    <table className="tbl">
+      <thead><tr><th>Server</th><th>Matched as</th><th>A</th><th>B</th></tr></thead>
+      <tbody>{rows.map((p) => (
+        <tr key={`${p.a.session_id}|${p.b.session_id}`}>
+          <td className="font-mono text-xs whitespace-nowrap">{p.asset}</td>
+          <td className="text-sm">{p.match}</td>
+          <td><SessionCell x={p.a} /><div className="text-xs mt-1">{p.a.anomaly_level}, score {p.a.anomaly_score.toFixed(3)}</div></td>
+          <td><SessionCell x={p.b} /><div className="text-xs mt-1">{p.b.anomaly_level}, score {p.b.anomaly_score.toFixed(3)}</div></td>
+        </tr>))}
+      </tbody>
+    </table>));
 
 const Counts = ({ title, rows }: { title: string; rows: CountDelta[] }) => (
   <Panel title={title} bodyClass="overflow-x-auto">
@@ -70,7 +113,7 @@ const Trend = ({ captureId }: { captureId: string }) => {
         emptyText="The selected analysis has no email sessions to relate to other analyses.">
         {t.data && <>
           <TrendChart points={t.data} />
-          <div className="overflow-x-auto">
+          <ScrollBody className="overflow-x-auto" label="Posture trend table">
             <table className="tbl">
               <thead><tr><th className="sno">S. No.</th><th>Captured (UTC)</th><th>Analysis</th><th>Policy</th><th className="num">Score</th><th className="num">Findings</th><th className="num">Critical + high</th><th>Shared servers</th></tr></thead>
               <tbody>
@@ -88,7 +131,7 @@ const Trend = ({ captureId }: { captureId: string }) => {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollBody>
           <p className="text-xs text-ink-3 px-3 py-2">Analyses are related when they share at least one mail server (protocol, address and port). This is an association by address, not proof of identity. Re-analyses of the same file (same SHA-256) appear separately and may use different policy profiles, so score changes can reflect policy rather than configuration.</p>
         </>}
       </StateBlock>
@@ -146,6 +189,15 @@ export const ComparePage = () => {
             <Panel title={`New in B (${c.findings.new.length})`} bodyClass="overflow-x-auto"><FindingTable rows={c.findings.new} side="b" empty="No new findings in B." /></Panel>
           </div>
           <Panel title={`Present in both (${c.findings.persisting.length})`} bodyClass="overflow-x-auto"><FindingTable rows={c.findings.persisting} side="both" empty="No finding persists across both analyses." /></Panel>
+          <section aria-labelledby="ml-changes-h" className="space-y-3">
+            <h2 id="ml-changes-h" className="text-lg">ML anomaly changes (supplementary)</h2>
+            <p className="text-sm text-ink-2 max-w-[90ch]">Sessions the ML stage ranked as weaker than, and unusual relative to, their own capture. Matched as the same session (same endpoints) or else the same server. Each analysis is judged against its own capture baseline, so a change can reflect a different session population, not only a configuration change. Deterministic findings above remain the primary assessment.</p>
+            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5">
+              <Panel title={`Anomalous sessions resolved in B (${c.anomaly_sessions.resolved.length})`} bodyClass="overflow-x-auto"><AnomalyChangeTable rows={c.anomaly_sessions.resolved} empty="No anomalous session from A is absent or normal in B." /></Panel>
+              <Panel title={`New anomalous sessions in B (${c.anomaly_sessions.new.length})`} bodyClass="overflow-x-auto"><AnomalyChangeTable rows={c.anomaly_sessions.new} empty="No new anomalous session in B." /></Panel>
+            </div>
+            <Panel title={`Anomalous in both (${c.anomaly_sessions.persisting.length})`} bodyClass="overflow-x-auto"><AnomalyPairTable rows={c.anomaly_sessions.persisting} /></Panel>
+          </section>
           <Panel title="Server configuration changes" bodyClass="overflow-x-auto">
             <table className="tbl">
               <thead><tr><th>Server</th><th>Present in</th><th>TLS versions A to B</th><th>Cipher suites A to B</th><th>Server certificate</th></tr></thead>

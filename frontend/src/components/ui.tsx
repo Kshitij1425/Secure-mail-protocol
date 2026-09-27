@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ChevronRight, Inbox, Info, Loader2, OctagonAlert, X } from 'lucide-react';
@@ -39,17 +39,43 @@ export const EvidenceTag = ({ value }: { value: string | null | undefined }) => 
 };
 
 /* ---------------------------------------------------------------- layout pieces */
-export const Panel = ({ title, actions, children, bodyClass = 'panel-body', id }: {
+export const Panel = ({ title, actions, children, bodyClass = 'panel-body', id: givenId }: {
   title: ReactNode; actions?: ReactNode; children: ReactNode; bodyClass?: string; id?: string;
-}) => (
+}) => {
+  const autoId = useId();
+  const id = givenId ?? `panel${autoId.replace(/:/g, '')}`;
+  return (
   <section className="panel" aria-labelledby={id}>
     <div className="panel-head">
       <h2 id={id} className="panel-title">{title}</h2>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>
-    <div className={bodyClass}>{children}</div>
+    {bodyClass.includes('overflow-x-auto')
+      ? <ScrollBody className={bodyClass} labelledBy={id}>{children}</ScrollBody>
+      : <div className={bodyClass}>{children}</div>}
   </section>
-);
+  );
+};
+
+/** Horizontally scrollable panel body: focusable (keyboard scrolling) only while it actually overflows. */
+export const ScrollBody = ({ className, labelledBy, label, children }: { className: string; labelledBy?: string; label?: string; children: ReactNode }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollWidth > el.clientWidth + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className={className} {...(overflows ? { tabIndex: 0, role: 'region', 'aria-labelledby': labelledBy, 'aria-label': labelledBy ? undefined : (label ?? 'Scrollable table') } : {})}>
+      {children}
+    </div>
+  );
+};
 
 export const PageTitle = ({ title, lead, actions }: { title: string; lead?: ReactNode; actions?: ReactNode }) => (
   <div className="flex flex-wrap items-end justify-between gap-3">
@@ -185,7 +211,7 @@ export const Tabs = ({ tabs, value, onChange, label }: {
   return (
     <div role="tablist" aria-label={label} onKeyDown={onKey} className="flex flex-wrap border-b border-line-strong gap-1">
       {tabs.map((t) => (
-        <button key={t.id} type="button" role="tab" id={`tab-${t.id}`} aria-selected={value === t.id} aria-controls={`panel-${t.id}`}
+        <button key={t.id} type="button" role="tab" id={`tab-${t.id}`} aria-selected={value === t.id} aria-controls={value === t.id ? `panel-${t.id}` : undefined}
           tabIndex={value === t.id ? 0 : -1} onClick={() => onChange(t.id)}
           className={`px-3 py-2 text-sm -mb-px border-b-2 ${value === t.id ? 'border-signal text-ink font-semibold' : 'border-transparent text-ink-2 hover:text-ink hover:border-line-strong'}`}>
           {t.label}

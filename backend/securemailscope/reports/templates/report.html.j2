@@ -45,7 +45,7 @@ footer{margin-top:40px;padding-top:10px;border-top:1px solid #d5dbe5;color:#6a78
 SecureMailScope {{ doc.tool.version }}</p>
 {% if red.mode == "REDACTED" %}<div class="note">{{ red.note }}</div>{% endif %}
 
-<h2><span>1</span>Executive summary</h2>
+<h2 id="s1"><span>1</span>Executive summary</h2>
 <p><span class="score">{{ "n/a" if p.overall_score is none else "%.0f"|format(p.overall_score) }}</span>{% if p.overall_score is not none %} / 100{% endif %} - <strong>{{ p.status }}</strong></p>
 <div class="grid">
 <div><b>{{ c.total_packets }}</b>packets</div><div><b>{{ c.reconstructed_streams }}</b>TCP streams</div>
@@ -56,7 +56,7 @@ SecureMailScope {{ doc.tool.version }}</p>
 {% if doc.remediation_plan %}<p>Highest-priority issue: <strong>{{ doc.remediation_plan[0].title }}</strong> ({{ doc.remediation_plan[0].severity }}, {{ doc.remediation_plan[0].affected_sessions }} session(s)).</p>{% endif %}
 {% if p.overall_score is none %}<div class="note">No email session with assessable evidence was found; no score is given. Absence of evidence is not treated as secure or insecure.</div>{% endif %}
 
-<h2><span>2</span>Capture metadata</h2>
+<h2 id="s2"><span>2</span>Capture metadata</h2>
 <table class="kv">
 <tr><td>File</td><td><code>{{ c.filename }}</code> ({{ c.size_bytes }} bytes, {{ c.format }}, link type {{ c.link_type }})</td></tr>
 <tr><td>Capture window</td><td>{{ c.capture_start }} to {{ c.capture_end }}</td></tr>
@@ -64,18 +64,18 @@ SecureMailScope {{ doc.tool.version }}</p>
 <tr><td>Reassembled TCP streams</td><td>{{ c.reconstructed_streams }}</td></tr>
 </table>
 
-<h2><span>3</span>Security posture</h2>
+<h2 id="s3"><span>3</span>Security posture</h2>
 <table><tr><th>Dimension</th><th>Score</th><th>Findings</th><th>Coverage</th><th>Evidence quality</th></tr>
 {% for d in p.dimensions %}<tr><td>{{ d.name }}</td><td>{{ "n/a" if d.score is none else "%.0f"|format(d.score) }}</td><td>{{ d.findings_count }}</td><td>{{ d.coverage_percent }}%</td><td>{{ d.evidence_quality }}</td></tr>{% endfor %}
 </table>
 {% if p.top_contributors %}<ol>{% for t in p.top_contributors %}<li>{{ t.explanation }}</li>{% endfor %}</ol>{% endif %}
 
-<h2><span>4</span>Protocol summary</h2>
+<h2 id="s4"><span>4</span>Protocol summary</h2>
 <table><tr><th>Protocol</th><th>Sessions</th><th>Implicit TLS</th><th>STARTTLS to TLS</th><th>STARTTLS rejected</th><th>Plaintext</th><th>TLS failed</th></tr>
 {% for proto, v in (doc.protocol_summary or {}).items() %}<tr><td>{{ proto }}</td><td>{{ v.sessions }}</td><td>{{ v.implicit_tls }}</td><td>{{ v.starttls_established }}</td><td>{{ v.starttls_rejected }}</td><td>{{ v.plaintext }}</td><td>{{ v.tls_failed }}</td></tr>{% else %}<tr><td colspan="7">No email sessions.</td></tr>{% endfor %}
 </table>
 
-<h2><span>5</span>TLS summary</h2>
+<h2 id="s5"><span>5</span>TLS summary</h2>
 {% set t = doc.tls_summary or {} %}
 <table class="kv">
 <tr><td>Negotiated versions</td><td>{% for k, v in (t.versions or {}).items() %}{{ k }}: {{ v }}{% if not loop.last %}; {% endif %}{% else %}none{% endfor %}</td></tr>
@@ -85,13 +85,13 @@ SecureMailScope {{ doc.tool.version }}</p>
 <tr><td>Certificate visibility</td><td>{% for k, v in (t.certificate_visibility or {}).items() %}{{ k }}: {{ v }}{% if not loop.last %}; {% endif %}{% else %}n/a{% endfor %}</td></tr>
 </table>
 
-<h2><span>6</span>Certificate summary</h2>
+<h2 id="s6"><span>6</span>Certificate summary</h2>
 <p class="meta">Certificates were extracted from cleartext TLS Certificate messages (TLS 1.2 and earlier). Chain linkage is verified by signature; trust against a trust anchor is <strong>not</strong> evaluated.</p>
 <table><tr><th>Subject / issuer</th><th>Serial / SHA-256</th><th>Validity at capture time</th><th>Key / signature</th><th>Seen in</th><th>Linkage</th></tr>
 {% for x in doc.certificate_inventory or [] %}<tr><td>{{ x.subject }}<br><small>issuer {{ x.issuer }}</small></td><td><code>{{ x.serial_number }}</code><br><code>{{ x.fingerprint_sha256 }}</code></td><td>{{ x.not_before }} - {{ x.not_after }}{% if x.is_expired %} <span class="sev HIGH">expired</span>{% elif x.is_not_yet_valid %} <span class="sev HIGH">not yet valid</span>{% elif x.days_to_expiry_at_capture is not none %}<br><small>{{ x.days_to_expiry_at_capture }} days remaining</small>{% endif %}</td><td>{{ x.public_key_algorithm }} {{ x.public_key_size_bits }}<br>{{ x.signature_algorithm }}</td><td>{{ x.session_count }} session(s)<br><small>{{ x.servers|join(", ") }}</small></td><td>{{ x.chain_linkage|join(", ") or "-" }}{% if x.is_self_signed %}<br><small>self-signed</small>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No certificates observed.</td></tr>{% endfor %}
 </table>
 
-<h2><span>7</span>Findings</h2>
+<h2 id="s7"><span>7</span>Findings</h2>
 {% for f in doc.findings %}
 <table class="kv" style="margin-top:14px">
 <tr><th colspan="2"><span class="sev {{ f.severity }}">{{ f.severity }}</span> {{ f.rule_id }} - {{ f.title }}</th></tr>
@@ -106,29 +106,29 @@ SecureMailScope {{ doc.tool.version }}</p>
 </table>
 {% else %}<p>No findings.</p>{% endfor %}
 
-<h2><span>8</span>Affected sessions</h2>
+<h2 id="s8"><span>8</span>Affected sessions</h2>
 <table><tr><th>Client to server</th><th>Protocol</th><th>STARTTLS / TLS</th><th>Cipher</th><th>Frames</th><th>Findings</th></tr>
 {% for s in doc.sessions %}<tr><td><code>{{ s.client.ip }}:{{ s.client.port }} to {{ s.server.ip }}:{{ s.server.port }}</code></td><td>{{ s.protocol }}{% if s.implicit_tls %} (implicit TLS){% endif %}</td><td>{{ s.starttls.final_state }} / {{ (s.tls or {}).negotiated_version or "not observed" }}</td><td><code>{{ (s.tls or {}).cipher_suite or "-" }}</code></td><td>{{ s.first_frame }}-{{ s.last_frame }}</td><td>{{ s.finding_ids|length }}</td></tr>{% else %}<tr><td colspan="6">No email sessions.</td></tr>{% endfor %}
 </table>
 
-<h2><span>9</span>Anomalies (supplementary ML)</h2>
+<h2 id="s9"><span>9</span>Anomalies (supplementary ML)</h2>
 <div class="note">Unsupervised Isolation Forest fitted on this capture's own TLS sessions (status: {{ (doc.ml or {}).status }}). An anomaly is a session cryptographically weaker than this capture's norm and rare in it; it requires investigation. It is not a confirmed vulnerability or compromise and never changes findings or the score.</div>
 <table><tr><th>Session</th><th>Level</th><th>Score</th><th>Why it differs</th></tr>
 {% for x in doc.anomalies if x.is_anomaly %}<tr><td><code>{{ x.session_id }}</code></td><td>{{ x.anomaly_level }}</td><td>{{ x.anomaly_score }}</td><td>{{ x.explanation }}</td></tr>{% else %}<tr><td colspan="4">No outliers flagged.</td></tr>{% endfor %}
 </table>
 
-<h2><span>10</span>Evidence timeline</h2>
+<h2 id="s10"><span>10</span>Evidence timeline</h2>
 <table><tr><th>Capture time (UTC)</th><th>Frame</th><th>Session</th><th>Event</th><th>Class</th></tr>
 {% for e in (doc.timeline or [])[:400] %}<tr><td>{{ e.ts or "analysis" }}</td><td>{{ e.frame or "-" }}</td><td><code>{{ e.session_id.split("~")[-1] }}</code></td><td>{{ e.label }}</td><td>{{ e.evidence_class }}</td></tr>{% endfor %}
 </table>
 {% if (doc.timeline or [])|length > 400 %}<p class="meta">{{ (doc.timeline|length) - 400 }} further events are in the JSON report.</p>{% endif %}
 
-<h2><span>11</span>Recommendations</h2>
+<h2 id="s11"><span>11</span>Recommendations</h2>
 <table><tr><th>#</th><th>Issue</th><th>Severity</th><th>Sessions</th><th>Action</th><th>Expected effect</th></tr>
 {% for r in doc.remediation_plan %}<tr><td>{{ r.priority }}</td><td>{{ r.rule_id }} - {{ r.title }}</td><td><span class="sev {{ r.severity }}">{{ r.severity }}</span></td><td>{{ r.affected_sessions }}</td><td>{{ r.recommendation }}</td><td>{{ r.expected_effect or "" }}</td></tr>{% else %}<tr><td colspan="6">No actionable findings.</td></tr>{% endfor %}
 </table>
 
-<h2><span>12</span>Methodology</h2>
+<h2 id="s12"><span>12</span>Methodology</h2>
 <ul>
 <li>{{ a.mode }}.</li>
 <li>Pipeline: capture ingestion, TCP reassembly by sequence number, SMTP/IMAP/POP3 identification, STARTTLS state tracking, TLS handshake parsing, X.509 analysis, deterministic rules (policy {{ a.rule_policy_version }}), posture scoring (policy {{ a.scoring_policy_version }}), supplementary ML.</li>
@@ -137,10 +137,10 @@ SecureMailScope {{ doc.tool.version }}</p>
 <li>Certificate validity reference: {{ a.certificate_validity_reference }}.</li>
 </ul>
 
-<h2><span>13</span>Limitations</h2>
+<h2 id="s13"><span>13</span>Limitations</h2>
 <ul>{% for l in doc.limitations %}<li>{{ l }}</li>{% endfor %}</ul>
 
-<h2><span>14</span>Integrity</h2>
+<h2 id="s14"><span>14</span>Integrity</h2>
 <table class="kv">
 <tr><td>Capture SHA-256</td><td><code>{{ c.sha256 }}</code></td></tr>
 <tr><td>Analysis timestamp</td><td>{{ a.analyzed_at }}</td></tr>
@@ -150,7 +150,7 @@ SecureMailScope {{ doc.tool.version }}</p>
 <tr><td>Report mode</td><td>{{ red.mode }}</td></tr>
 </table>
 {% if doc.analyst_annotations %}
-<h2><span>A</span>Appendix: analyst notes and selected items</h2>
+<h2 id="sA"><span>A</span>Appendix: analyst notes and selected items</h2>
 <div class="note">Analyst metadata selected for this report. It is not evidence and does not change findings or the score. In redacted reports, addresses, host names and e-mail addresses in notes are pseudonymised; review free text before sharing.</div>
 <table><tr><th>Item</th><th>Type</th><th>Note</th><th>Added (UTC)</th></tr>
 {% for n in doc.analyst_annotations %}<tr><td>{{ n.target }}</td><td>{{ n.target_type }}</td><td>{{ n.note or "(selected without note)" }}</td><td>{{ n.created_at or "" }}</td></tr>{% endfor %}

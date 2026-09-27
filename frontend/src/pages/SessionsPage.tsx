@@ -95,7 +95,7 @@ export const SessionsPage = () => {
             </StateBlock>
           </Panel>
         </TabPanel>
-      ) : (<>
+      ) : (<TabPanel id="sessions">
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 min-w-[16rem] flex-1"><span className="label">Search</span>
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Address, port, cipher or version" className="field" /></label>
@@ -186,7 +186,7 @@ export const SessionsPage = () => {
           </Drawer>
         )}
       </div>
-      </>)}
+      </TabPanel>)}
     </>
   );
 };

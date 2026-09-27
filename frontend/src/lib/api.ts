@@ -70,6 +70,14 @@ export const getAnomaly = async (id: number) => (await apiClient.get<AnomalyDeta
 export const getCompare = async (a: string, b: string) =>
   (await apiClient.get<Comparison>('/compare', { params: { a, b } })).data;
 
+export interface ReportPreview {
+  html: string; sha256: string; sections: { anchor: string; number: string; title: string }[];
+  mode: 'RAW' | 'REDACTED'; policy_profile: string; score: number | null; status: string; findings: number;
+  capture_sha256: string; filename: string; selected_annotations: number;
+}
+export const getReportPreview = async (captureId: string, redact: boolean) =>
+  (await apiClient.get<ReportPreview>(`/captures/${enc(captureId)}/report-preview`, { params: { redact } })).data;
+
 export const getTrend = async (captureId: string) =>
   (await apiClient.get<TrendPoint[]>(`/captures/${enc(captureId)}/trend`)).data;
 
