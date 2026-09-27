@@ -11,7 +11,11 @@ const Section = ({ id, title, children }: { id: string; title: string; children:
 export const AboutPage = () => {
   const { hash } = useLocation();
   useEffect(() => {
-    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'start' });
+    if (!hash) return;
+    const go = () => document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'start' });
+    go();
+    // Web fonts can finish loading after the first scroll and reflow the page; scroll again then.
+    void document.fonts?.ready.then(go);
   }, [hash]);
   return (
     <>
