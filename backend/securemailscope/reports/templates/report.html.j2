@@ -112,7 +112,7 @@ SecureMailScope {{ doc.tool.version }}</p>
 </table>
 
 <h2><span>9</span>Anomalies (supplementary ML)</h2>
-<div class="note">Unsupervised Isolation Forest fitted on this capture's own TLS sessions (status: {{ (doc.ml or {}).status }}). An anomaly is a statistical outlier that requires investigation. It is not a confirmed vulnerability or compromise and never changes findings or the score.</div>
+<div class="note">Unsupervised Isolation Forest fitted on this capture's own TLS sessions (status: {{ (doc.ml or {}).status }}). An anomaly is a session cryptographically weaker than this capture's norm and rare in it; it requires investigation. It is not a confirmed vulnerability or compromise and never changes findings or the score.</div>
 <table><tr><th>Session</th><th>Level</th><th>Score</th><th>Why it differs</th></tr>
 {% for x in doc.anomalies if x.is_anomaly %}<tr><td><code>{{ x.session_id }}</code></td><td>{{ x.anomaly_level }}</td><td>{{ x.anomaly_score }}</td><td>{{ x.explanation }}</td></tr>{% else %}<tr><td colspan="4">No outliers flagged.</td></tr>{% endfor %}
 </table>

@@ -1,0 +1,150 @@
+{
+  "pool_sessions": 80,
+  "configs": 20,
+  "results": {
+    "v1 (isolation-forest/1)": {
+      "dev (split A)": {
+        "estates": 300,
+        "split": "A",
+        "weak_recall": 0.9826,
+        "precision": 0.2398,
+        "f1": 0.3855,
+        "flag_rate_dominant_config": 0.1252,
+        "false_positive_rate_minority_healthy": 0.9929,
+        "mean_flag_rate": 0.2623,
+        "clean_estates_with_any_flag": "60/60",
+        "mean_auc": 0.9687,
+        "recall_per_weak_config": {
+          "w_tls10_static_rsa1024": 1.0,
+          "w_tls11_ecdhe": 0.9746,
+          "w_tls12_cbc_sha1_static_rsa": 1.0,
+          "w_tls12_expired_cert": 1.0,
+          "w_tls12_rsa1024_cert": 0.9344
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 1.0,
+          "<=5%": 1.0,
+          ">12%": 0.9645
+        }
+      },
+      "held-out (split B)": {
+        "estates": 300,
+        "split": "B",
+        "weak_recall": 0.9822,
+        "precision": 0.2078,
+        "f1": 0.343,
+        "flag_rate_dominant_config": 0.1439,
+        "false_positive_rate_minority_healthy": 0.976,
+        "mean_flag_rate": 0.287,
+        "clean_estates_with_any_flag": "70/70",
+        "mean_auc": 0.9657,
+        "recall_per_weak_config": {
+          "w_tls10_ecdhe": 1.0,
+          "w_tls12_dhe1024": 0.9529,
+          "w_tls12_selfsigned": 0.9751,
+          "w_tls12_static_rsa": 1.0
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 0.9985,
+          "<=5%": 0.9969,
+          ">12%": 0.9652
+        }
+      },
+      "legacy fleet (dominant config weak, split B)": {
+        "estates": 300,
+        "split": "B",
+        "weak_recall": 0.9847,
+        "precision": 0.1705,
+        "f1": 0.2907,
+        "flag_rate_dominant_config": 0.1612,
+        "false_positive_rate_minority_healthy": 0.988,
+        "mean_flag_rate": 0.2743,
+        "clean_estates_with_any_flag": "78/78",
+        "mean_auc": 0.9671,
+        "recall_per_weak_config": {
+          "w_tls10_ecdhe": 1.0,
+          "w_tls12_dhe1024": 0.9522,
+          "w_tls12_selfsigned": 0.9819,
+          "w_tls12_static_rsa": 1.0
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 1.0,
+          "<=5%": 1.0,
+          ">12%": 0.9631
+        }
+      }
+    },
+    "current (isolation-forest/2)": {
+      "dev (split A)": {
+        "estates": 300,
+        "split": "A",
+        "weak_recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0,
+        "flag_rate_dominant_config": 0.0,
+        "false_positive_rate_minority_healthy": 0.0,
+        "mean_flag_rate": 0.0646,
+        "clean_estates_with_any_flag": "0/60",
+        "mean_auc": 1.0,
+        "recall_per_weak_config": {
+          "w_tls10_static_rsa1024": 1.0,
+          "w_tls11_ecdhe": 1.0,
+          "w_tls12_cbc_sha1_static_rsa": 1.0,
+          "w_tls12_expired_cert": 1.0,
+          "w_tls12_rsa1024_cert": 1.0
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 1.0,
+          "<=5%": 1.0,
+          ">12%": 1.0
+        }
+      },
+      "held-out (split B)": {
+        "estates": 300,
+        "split": "B",
+        "weak_recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0,
+        "flag_rate_dominant_config": 0.0,
+        "false_positive_rate_minority_healthy": 0.0,
+        "mean_flag_rate": 0.0602,
+        "clean_estates_with_any_flag": "0/70",
+        "mean_auc": 1.0,
+        "recall_per_weak_config": {
+          "w_tls10_ecdhe": 1.0,
+          "w_tls12_dhe1024": 1.0,
+          "w_tls12_selfsigned": 1.0,
+          "w_tls12_static_rsa": 1.0
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 1.0,
+          "<=5%": 1.0,
+          ">12%": 1.0
+        }
+      },
+      "legacy fleet (dominant config weak, split B)": {
+        "estates": 300,
+        "split": "B",
+        "weak_recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0,
+        "flag_rate_dominant_config": 0.0,
+        "false_positive_rate_minority_healthy": 0.0,
+        "mean_flag_rate": 0.0498,
+        "clean_estates_with_any_flag": "0/78",
+        "mean_auc": 1.0,
+        "recall_per_weak_config": {
+          "w_tls10_ecdhe": 1.0,
+          "w_tls12_dhe1024": 1.0,
+          "w_tls12_selfsigned": 1.0,
+          "w_tls12_static_rsa": 1.0
+        },
+        "recall_by_weak_share_of_estate": {
+          "5-12%": 1.0,
+          "<=5%": 1.0,
+          ">12%": 1.0
+        }
+      }
+    }
+  }
+}

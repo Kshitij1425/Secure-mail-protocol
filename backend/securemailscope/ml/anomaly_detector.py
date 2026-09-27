@@ -224,96 +224,58 @@ class IsolationForestAnomalyDetector:
 
 class AnomalyDetectionEngine:
     """
-    High-level anomaly detection orchestrator.
+    High-level anomaly detection orchestrator (per capture, unsupervised).
 
-    Coordinates feature extraction and anomaly detection across the pipeline.
-    Surfaces anomalies as supplementary insights without overriding M8 findings.
+    Uses the posture outlier model (``ml/posture_model.py``, isolation-forest/2). The
+    ``IsolationForestAnomalyDetector`` / ``FeatureExtractor`` classes above are the superseded
+    v1 model, kept for reference and comparison (see tests/ml_eval).
+    Anomalies are supplementary insights and never override deterministic findings.
     """
 
-    def __init__(self, contamination=0.1, min_training_sessions: int = 3):
-        self.detector = IsolationForestAnomalyDetector(contamination=contamination)
+    def __init__(self, contamination="auto", min_training_sessions: int = 3):
+        from securemailscope.ml.posture_model import PostureOutlierDetector
+        self.detector = PostureOutlierDetector(contamination=contamination)
         self.trained_sessions_count = 0
         self.min_training_sessions = min_training_sessions
         self.status = "not_trained"
 
-    def train_on_sessions(
-        self,
-        sessions: List[Dict[str, Any]],
-        protocol: EmailProtocol,
-        reference_time=None,
-    ) -> bool:
-        """Train anomaly detector on a collection of sessions (unsupervised, per capture)."""
-        features_list = []
+    @staticmethod
+    def _vectors(sessions: List[Dict[str, Any]], protocol=None, reference_time=None):
+        from securemailscope.ml.posture_model import extract
+        out = []
+        for i, row in enumerate(sessions):
+            v = extract(row.get("session_id", f"session_{i}"), row.get("protocol", protocol),
+                        row.get("tls_data"), row.get("certs", []), reference_time)
+            if v is not None:
+                out.append(v)
+        return out
+
+    def train_on_sessions(self, sessions: List[Dict[str, Any]], protocol: EmailProtocol,
+                          reference_time=None) -> bool:
+        """Fit on a capture's own TLS sessions."""
         if len(sessions) < self.min_training_sessions:
             self.status = f"insufficient_sessions (<{self.min_training_sessions})"
             return False
-
-        for i, session in enumerate(sessions):
-            tls_data = session.get("tls_data")
-            certs = session.get("certs", [])
-
-            features = FeatureExtractor.extract_from_tls_session(
-                session_id=session.get("session_id", f"session_{i}"),
-                protocol=session.get("protocol", protocol),
-                tls_data=tls_data,
-                certs=certs,
-                packet_count=session.get("packet_count", 0),
-                session_duration_seconds=session.get("duration", 0.0),
-                reference_time=reference_time,
-            )
-
-            if features:
-                features_list.append(features)
-
-        if features_list:
-            success = self.detector.fit(features_list)
-            if success:
-                self.trained_sessions_count = len(features_list)
-                self.status = "trained"
-            return success
-
+        vectors = self._vectors(sessions, protocol, reference_time)
+        if vectors and self.detector.fit(vectors):
+            self.trained_sessions_count = len(vectors)
+            self.status = "trained"
+            return True
         return False
 
-    def detect_anomaly(
-        self,
-        session_id: str,
-        protocol: EmailProtocol,
-        tls_data: Optional[TLSSessionData],
-        certs: List[CertificateDetails],
-        packet_count: int = 0,
-        duration: float = 0.0,
-        reference_time=None,
-    ) -> Optional[AnomalyResult]:
-        """Detect anomalies in a single session."""
-        features = FeatureExtractor.extract_from_tls_session(
-            session_id=session_id,
-            protocol=protocol,
-            tls_data=tls_data,
-            certs=certs,
-            packet_count=packet_count,
-            session_duration_seconds=duration,
-            reference_time=reference_time,
-        )
-
-        if not features:
-            return None
-
-        return self.detector.detect(features)
+    def detect_anomaly(self, session_id: str, protocol: EmailProtocol, tls_data: Optional[TLSSessionData],
+                       certs: List[CertificateDetails], packet_count: int = 0, duration: float = 0.0,
+                       reference_time=None) -> Optional[AnomalyResult]:
+        """Score one session against the fitted capture norm."""
+        vectors = self._vectors([{"session_id": session_id, "protocol": protocol, "tls_data": tls_data,
+                                  "certs": certs}], protocol, reference_time)
+        return self.detector.score(vectors)[0] if vectors else None
 
     def detect_anomalies(self, sessions: List[Dict[str, Any]], reference_time=None) -> List[AnomalyResult]:
-        """Batch variant of ``detect_anomaly`` over the same row format as ``train_on_sessions``."""
-        feats = []
-        for row in sessions:
-            f = FeatureExtractor.extract_from_tls_session(
-                session_id=row["session_id"], protocol=row["protocol"], tls_data=row["tls_data"],
-                certs=row["certs"], packet_count=row.get("packet_count", 0),
-                session_duration_seconds=row.get("duration", 0.0), reference_time=reference_time)
-            if f is not None:
-                feats.append(f)
-        return self.detector.detect_batch(feats)
+        """Score many sessions (same row format as ``train_on_sessions``)."""
+        return self.detector.score(self._vectors(sessions, None, reference_time))
 
     def get_summary(self) -> Dict[str, Any]:
-        """Get anomaly detection engine summary."""
         return {
             "engine": "IsolationForest",
             "model_version": self.detector.MODEL_VERSION,
@@ -324,5 +286,6 @@ class AnomalyDetectionEngine:
             "contamination": self.detector.contamination,
             "random_state": self.detector.random_state,
             "feature_count": len(self.detector.feature_names),
-            "training_scope": "unsupervised, fitted per capture on its own TLS sessions",
+            "training_scope": "unsupervised, fitted per capture on its own TLS sessions; one-sided "
+                              "(only sessions weaker than the capture norm can be outliers)",
         }

@@ -8,12 +8,20 @@ import { Breadcrumbs, Drawer, EvidenceTag, KV, NeedCapture, PageTitle, Panel, St
 import { shortSession } from '../lib/format';
 
 const FEATURE_LABEL: Record<string, string> = {
-  tls_version_ordinal: 'TLS version (0 = SSLv2 ... 5 = TLS 1.3)', cipher_strength: 'Cipher strength (0-100)',
-  certificate_key_size: 'Certificate key size (bits; 0 = not observed)', certificate_age_days: 'Certificate age at capture (days)',
-  certificate_validity_days: 'Days of validity remaining at capture', session_duration_seconds: 'Session duration (s)',
-  packet_count: 'Packets in session', has_forward_secrecy: 'Forward secrecy', signature_algorithm_strength: 'Signature strength (0-100)',
-  certificate_chain_depth: 'Certificates presented',
+  protocol_version: 'TLS version (0 = SSL 2.0 ... 4 = TLS 1.2, 5 = TLS 1.3)',
+  forward_secrecy: 'Forward secrecy (1 = yes)',
+  aead_cipher: 'AEAD cipher (1 = yes)',
+  cipher_class: 'Cipher class (0 insecure, 1 weak, 2 legacy, 3 recommended)',
+  key_exchange_security_bits: 'Key exchange strength (security bits)',
+  certificate_key_security_bits: 'Certificate key strength (security bits)',
+  certificate_signature_hash: 'Signature hash (0 MD5, 1 SHA-1, 2 SHA-2+)',
+  certificate_valid_at_capture: 'Certificate valid at capture time (1 = yes)',
+  certificate_days_to_expiry: 'Days to certificate expiry at capture',
+  certificate_not_self_signed: 'Certificate not self-signed (1 = yes)',
 };
+
+const fmtFeature = (v: unknown) =>
+  v === null || v === undefined ? 'not observable' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v);
 
 export const AnomaliesPage = () => {
   const { activeCaptureId, activeCapture } = useCapture();
@@ -33,10 +41,10 @@ export const AnomaliesPage = () => {
     <>
       <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' }, { label: 'Anomalies' }]} />
       <PageTitle title="ML anomalies"
-        lead="An unsupervised Isolation Forest is fitted on this capture's own TLS sessions and ranks sessions that differ from the rest. These are investigation leads, not findings." />
+        lead="An unsupervised Isolation Forest is fitted on this capture's own TLS sessions. Only sessions that are cryptographically weaker than this capture's norm, and rare here, are reported. These are investigation leads, not findings." />
       <div className="notice">
         <strong>Rule-based findings and ML anomalies are separate.</strong> An outlier is a session whose TLS and certificate
-        features are unusual relative to this capture. It requires investigation; it is not a confirmed vulnerability or compromise,
+        features are weaker than, and unusual relative to, the rest of this capture. A weakness shared by most sessions is not an outlier (the rules still report it). It requires investigation; it is not a confirmed vulnerability or compromise,
         and it never changes findings or the posture score. Model status: <span className="font-mono">{ml ?? 'unknown'}</span>.
       </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show every evaluated session, not only outliers</label>
@@ -74,14 +82,14 @@ export const AnomaliesPage = () => {
                   { k: 'TLS session', v: <Link className="link font-mono text-xs break-all" to={`/sessions?id=${encodeURIComponent(d.session_id)}`}>{shortSession(d.session_id)}</Link> },
                 ]} />
                 <section className="space-y-1.5">
-                  <h3 className="text-sm font-semibold">Why this session differs</h3>
+                  <h3 className="text-sm font-semibold">Why this session was assessed this way</h3>
                   <p className="text-sm">{d.explanation}</p>
                 </section>
                 <section className="space-y-1.5">
-                  <h3 className="text-sm font-semibold">Feature vector (10 features)</h3>
+                  <h3 className="text-sm font-semibold">Posture features ({Object.keys(d.features).filter((k) => k !== 'protocol').length})</h3>
                   <table className="tbl"><tbody>
                     {Object.entries(d.features).filter(([k]) => k !== 'protocol').map(([k, v]) => (
-                      <tr key={k}><td className="text-ink-2">{FEATURE_LABEL[k] ?? k}</td><td className="num">{typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : String(v)}</td></tr>
+                      <tr key={k}><td className="text-ink-2">{FEATURE_LABEL[k] ?? k}</td><td className={`num ${v === null ? 'text-ink-3' : ''}`}>{fmtFeature(v)}</td></tr>
                     ))}
                   </tbody></table>
                 </section>

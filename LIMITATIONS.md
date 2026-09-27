@@ -39,8 +39,10 @@
 
 ## ML
 
-Unsupervised, per capture, no labelled evaluation data: see ML_DESIGN.md. On heterogeneous
-captures about 30% of sessions are flagged; anomalies are triage hints, not findings.
+Unsupervised, per capture. Evaluated on lab-generated labelled sessions only (ML_DESIGN.md):
+no real-world accuracy is claimed. On that data the Isolation Forest performs the same as the
+simple rule "below the capture norm on any feature"; its added value is a graded score. A
+weakness shared by most of a capture is not an outlier (the rules still report it).
 
 ## Evidence traceability
 

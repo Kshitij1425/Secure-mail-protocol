@@ -31,8 +31,9 @@ decrypts traffic.
   a recommendation and standards references.
 * **Posture score** 0-100 with five dimensions, coverage and evidence quality, root-cause
   grouping and a prioritised remediation plan. No email sessions -> `Unknown`, not 100.
-* **ML anomalies** (supplementary) - Isolation Forest fitted per capture; never changes findings
-  or the score. See [ML_DESIGN.md](ML_DESIGN.md).
+* **ML anomalies** (supplementary) - Isolation Forest fitted per capture that reports sessions
+  cryptographically weaker than the capture's own norm and rare in it; never changes findings or
+  the score. Evaluated on 80 labelled real lab sessions (v1 vs v2 in [ML_DESIGN.md](ML_DESIGN.md)).
 
 ## Analyst workflow
 
@@ -102,7 +103,7 @@ Interactive docs at `/docs`.
 
 ```powershell
 cd backend
-python -m pytest -q                                  # 368 tests incl. fuzz/property tests
+python -m pytest -q                                  # 376 tests incl. fuzz/property tests
 python -m tests.robustness.validate_fixtures         # 28 captures vs ground truth
 $env:HYPOTHESIS_PROFILE="deep"; python -m pytest tests/test_fuzz_properties.py   # long fuzz run
 python -m tests.performance.benchmark --sizes 1000 10000 100000

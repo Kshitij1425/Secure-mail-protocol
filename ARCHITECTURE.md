@@ -47,7 +47,7 @@ strictly passive: it never contacts a mail server and never decrypts traffic.
 | `certificates/analyzer.py` | X.509 parsing, validity at capture time, key/signature strength, SAN/CN, hostname match, chain linkage by signature | Trust is never claimed (no trust anchors); self-signed = self-signature verifies |
 | `rules/engine.py` | Rule catalogue (17 rules) + evaluation | Findings carry evidence class and capture frame numbers; no rule fires on unknown values |
 | `scoring/` | Posture score 0-100 per capture and per dimension | Root-cause grouping, monotone prevalence ramp, INSUFFICIENT_EVIDENCE not scored, no sessions -> `Unknown` |
-| `ml/` | 10 features per TLS session, Isolation Forest fitted per capture | Fixed seed, capture-time reference, >= 5 sessions, `auto` threshold, batched scoring |
+| `ml/` | Posture outlier model (isolation-forest/2): 10 security features per TLS session, saturated at acceptable levels, one-sided against the capture norm; Isolation Forest fitted per capture | Fixed seed, capture-time reference, >= 5 sessions, not-observable values neutral; evaluated in `tests/ml_eval` (see ML_DESIGN.md) |
 | `core/orchestrator.py` | Runs the pipeline; builds fresh state per analysis | Session ids can be capture-prefixed for global uniqueness |
 | `policy.py` | Policy profiles (balanced / strict / legacy_audit): key minimums, severity overrides, optional rules | `balanced` equals the pre-profile behaviour (tested) |
 | `reports/` | Canonical document (timeline, certificate inventory, remediation why/effect) + JSON/HTML (Jinja2 autoescape, CSP) / PDF (ReportLab, escaped), 14 sections | Same document for CLI, API and reports |

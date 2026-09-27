@@ -88,3 +88,10 @@ capture and its expected observations to a manifest before relying on it.
 * All lab servers bind to 127.0.0.1 (local lab) or an internal Docker network (Docker lab).
 * Weak configurations (TLS 1.0, RSA-1024, expired/self-signed certificates, plaintext AUTH) exist
   only inside the lab. Credentials used are dummy lab values.
+
+## ML evaluation pool
+
+`python lab/ml_eval_pool.py` records 80 real TLS mail sessions (20 server configurations x 4)
+with aiosmtpd and smtplib, labelled healthy / weak by configuration before any analysis, into
+`backend/tests/ml_eval/pool/` (+ `pool_manifest.json`). They are used by
+`python -m tests.ml_eval.evaluate` (from `backend/`) to compare the ML models; see `ML_DESIGN.md`.

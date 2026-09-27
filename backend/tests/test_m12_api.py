@@ -181,7 +181,7 @@ def test_anomaly_detail(client):
     flagged = client.get("/anomalies", params={"capture_id": cid, "is_anomaly": True}).json()
     assert len(flagged) >= 1
     d = client.get(f"/anomalies/{flagged[0]['id']}").json()
-    assert d["features"]["tls_version_ordinal"] == 2.0  # the TLS 1.0 outlier
+    assert d["features"]["protocol_version"] == 2.0  # the TLS 1.0 outlier
     assert "not a confirmed vulnerability" in d["classification"]
 
 

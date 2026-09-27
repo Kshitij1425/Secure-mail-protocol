@@ -165,7 +165,7 @@ export interface AnomalySummary {
 
 export interface AnomalyDetail extends AnomalySummary {
   explanation: string | null;
-  features: Record<string, number | string | boolean>;
+  features: Record<string, number | string | boolean | null>;
   timestamp: string | null;
   classification: string;
 }

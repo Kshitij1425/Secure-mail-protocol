@@ -1,0 +1,233 @@
+{
+  "description": "Labelled pool of real TLS mail sessions for evaluating the ML anomaly detector. Labels are assigned by server configuration before analysis (not by SecureMailScope rules).",
+  "generated_at": "2026-09-27T09:05:35.159451+00:00",
+  "generator": "lab/ml_eval_pool.py",
+  "capture_method": "lab/recording_relay.py (application bytes and timing real; TCP/IP headers reconstructed)",
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.5",
+    "openssl": "OpenSSL 3.0.13 30 Jan 2024"
+  },
+  "configs": [
+    {
+      "config": "h_tls13_rsa2048",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls13_rsa2048.pcap",
+      "server": "10.88.0.1:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 120,
+      "sha256": "d2380e16e53349b0c157f631d24744669a3447f3a585e7f01f750bb4291c88fd"
+    },
+    {
+      "config": "h_tls13_ecdsa_p256",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls13_ecdsa_p256.pcap",
+      "server": "10.88.0.2:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "09d3f63bbf04afcc4b540b1657f06a5362860dd59eafec7e57ab3a6c515c61bc"
+    },
+    {
+      "config": "h_tls13_implicit",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls13_implicit.pcap",
+      "server": "10.88.0.3:465",
+      "implicit_tls": true,
+      "sessions": 4,
+      "frames": 101,
+      "sha256": "99b2c386e2abcea836c7a8754e66485f4fe1ebcd6c6ded75a3c74d55813b47e7"
+    },
+    {
+      "config": "h_tls12_ecdhe_rsa_aes128gcm",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_ecdhe_rsa_aes128gcm.pcap",
+      "server": "10.88.0.4:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "e98b9e71da08dc6071c9b341b573631d6b4886fd78c61cc6556b45d308a72737"
+    },
+    {
+      "config": "h_tls12_ecdhe_rsa3072_aes256gcm",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_ecdhe_rsa3072_aes256gcm.pcap",
+      "server": "10.88.0.5:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "26be7467153c879a9e3e1289ba7a7db28ad0c5d8c31b8f65c8aafda54a2c0ebc"
+    },
+    {
+      "config": "h_tls12_ecdhe_rsa4096_chacha",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_ecdhe_rsa4096_chacha.pcap",
+      "server": "10.88.0.6:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "82e1da9969283afe7d842924c7cd8ae89ba5c5ffecdabb3e9072a767645ed058"
+    },
+    {
+      "config": "h_tls12_ecdhe_ecdsa_p256_aes128gcm",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_ecdhe_ecdsa_p256_aes128gcm.pcap",
+      "server": "10.88.0.7:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "3a0ef12637e3e485375ae2aa2905d3156e20ed2335ed6985ff049e8987d251ec"
+    },
+    {
+      "config": "h_tls12_ecdhe_ecdsa_p384_chacha",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_ecdhe_ecdsa_p384_chacha.pcap",
+      "server": "10.88.0.8:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "47a8305bf64b8ed20103aafee62f269a8ee9200d9f88fd61a3177c07282f54c6"
+    },
+    {
+      "config": "h_tls12_dhe2048_aes256gcm",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_dhe2048_aes256gcm.pcap",
+      "server": "10.88.0.9:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "84aa18335d60a8503c082b592fa2ea5119682659a75283b80e87f5ca1d930236"
+    },
+    {
+      "config": "h_tls12_implicit_aes256gcm",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_implicit_aes256gcm.pcap",
+      "server": "10.88.0.10:465",
+      "implicit_tls": true,
+      "sessions": 4,
+      "frames": 102,
+      "sha256": "3402614b3034bb0c27c304fc267a1ab585e159e2989c094e456f7a00654d87f8"
+    },
+    {
+      "config": "h_tls12_long_validity_leaf",
+      "label": "healthy",
+      "weakness": null,
+      "file": "h_tls12_long_validity_leaf.pcap",
+      "server": "10.88.0.11:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "234c73de8905e6b2839c2cf5530901236e25d455d1edca0e3a4dacf13ad812e7"
+    },
+    {
+      "config": "w_tls10_static_rsa1024",
+      "label": "weak",
+      "weakness": "TLS 1.0 + static RSA + RSA-1024 key",
+      "file": "w_tls10_static_rsa1024.pcap",
+      "server": "10.88.0.12:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "8e40971a35e1383a656c90b74d3338ae3653f76746d987735914826517e8fa13"
+    },
+    {
+      "config": "w_tls10_ecdhe",
+      "label": "weak",
+      "weakness": "TLS 1.0",
+      "file": "w_tls10_ecdhe.pcap",
+      "server": "10.88.0.13:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "1541ffc3546253e30d007a8e8253b900f5296f77d87bea2d9f14c048c5b7f900"
+    },
+    {
+      "config": "w_tls11_ecdhe",
+      "label": "weak",
+      "weakness": "TLS 1.1",
+      "file": "w_tls11_ecdhe.pcap",
+      "server": "10.88.0.14:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "04b0006cf27b3ec71ead642cc69dff316dc0aaa0dd98ea344092740d963743b9"
+    },
+    {
+      "config": "w_tls12_static_rsa",
+      "label": "weak",
+      "weakness": "no forward secrecy (static RSA key exchange)",
+      "file": "w_tls12_static_rsa.pcap",
+      "server": "10.88.0.15:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "6e04d30129e39dee706fa90ec679a0002a688d83082aafa8baf20774fada7d02"
+    },
+    {
+      "config": "w_tls12_expired_cert",
+      "label": "weak",
+      "weakness": "expired certificate",
+      "file": "w_tls12_expired_cert.pcap",
+      "server": "10.88.0.16:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "dc7dacd9a30af8f0420f863f6966554212c9784a63ef75850a35b14adfb2b647"
+    },
+    {
+      "config": "w_tls12_selfsigned",
+      "label": "weak",
+      "weakness": "self-signed certificate",
+      "file": "w_tls12_selfsigned.pcap",
+      "server": "10.88.0.17:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 118,
+      "sha256": "2503d9cfe8b55c155905425fcff95f11e4f3d5d450447029c659a2e2c5b54fb1"
+    },
+    {
+      "config": "w_tls12_rsa1024_cert",
+      "label": "weak",
+      "weakness": "RSA-1024 certificate key",
+      "file": "w_tls12_rsa1024_cert.pcap",
+      "server": "10.88.0.18:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "25277a7daebb12208e08706017b50b2566c3a48418884e3d289c767afbeba531"
+    },
+    {
+      "config": "w_tls12_dhe1024",
+      "label": "weak",
+      "weakness": "1024-bit DHE group",
+      "file": "w_tls12_dhe1024.pcap",
+      "server": "10.88.0.19:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 123,
+      "sha256": "2172c4f19a50b2100a32d3d79d44a09370aaf50f33c79ffafa26c3777b56d26f"
+    },
+    {
+      "config": "w_tls12_cbc_sha1_static_rsa",
+      "label": "weak",
+      "weakness": "static RSA + CBC/SHA-1 suite",
+      "file": "w_tls12_cbc_sha1_static_rsa.pcap",
+      "server": "10.88.0.20:587",
+      "implicit_tls": false,
+      "sessions": 4,
+      "frames": 122,
+      "sha256": "a4127147c71ea9794f482d59b2e57b6406ce0278d9b51994bd18d3460dafc9c9"
+    }
+  ]
+}

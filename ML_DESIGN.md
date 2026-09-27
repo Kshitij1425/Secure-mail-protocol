@@ -1,66 +1,135 @@
 # ML Anomaly Detection - Design and Measured Behaviour
 
 **Role:** supplementary. The ML stage never creates, removes or changes a deterministic
-finding and never affects the posture score (enforced in `core/orchestrator.py`: scoring
-consumes `all_findings` only; covered by `test_ml_flags_the_planted_outlier_only`).
+finding and never affects the posture score (scoring consumes rule findings only).
 
-## Model
+**Question it answers:** *which TLS sessions in this capture are cryptographically weaker than
+the capture's own norm, and rare here?* It is a triage aid for the analyst, not a
+vulnerability detector and not an attack detector.
+
+## Model (isolation-forest/2, `backend/securemailscope/ml/posture_model.py`)
 
 | Item | Value |
 |---|---|
-| Algorithm | scikit-learn `IsolationForest`, 100 trees |
-| Training | **Unsupervised, fitted per capture** on that capture's own TLS sessions. No external baseline, no labels, no persisted model. |
-| Eligible sessions | Email sessions whose TLS ServerHello was observed (negotiated version known) |
-| Minimum sessions | 5 (`MIN_ML_SESSIONS`). Below that the stage reports `insufficient_sessions (<5)` and produces no results. |
-| Threshold | `contamination="auto"` (score-based threshold, no forced outlier quota) |
-| Seed | `random_state=42` (fixed) |
-| Time reference | Capture start time (certificate age/validity features), so results do not change with the analysis date |
-| Model version string | `isolation-forest/1` (stored with every anomaly row) |
-| Scoring path | Batched `decision_function` (identical to per-session scoring; `test_batch_detection_matches_single_detection`) |
+| Algorithm | scikit-learn `IsolationForest`, 200 trees, `random_state=42`, `contamination="auto"` |
+| Training | Unsupervised, fitted per capture on its own TLS sessions; no labels, no persisted model |
+| Eligible sessions | Email sessions with an observed negotiated TLS version; at least 5 per capture |
+| Time reference | Capture start time |
 
-## Features (10, `ml/feature_extractor.py`)
+### Features (all oriented so that higher = stronger)
 
-| # | Feature | Source | Missing-data handling |
-|---|---|---|---|
-| 1 | `tls_version_ordinal` (SSLv2=0 ... TLS1.3=5) | ServerHello / supported_versions | Not applicable: only sessions with a negotiated version are evaluated |
-| 2 | `cipher_strength` (0-100 heuristic from suite name) | ServerHello | 50 if unknown |
-| 3 | `certificate_key_size` (bits) | Leaf certificate | 0 if no certificate observed (e.g. TLS 1.3) |
-| 4 | `certificate_age_days` at capture time | Leaf certificate | 0 if none |
-| 5 | `certificate_validity_days` remaining at capture time | Leaf certificate | 0 if none |
-| 6 | `session_duration_seconds` | TCP stream | - |
-| 7 | `packet_count` | TCP stream | - |
-| 8 | `has_forward_secrecy` (0/1) | Cipher classification / TLS 1.3 | 0 if unknown |
-| 9 | `signature_algorithm_strength` (0-100) | Leaf certificate | 50 if none |
-| 10 | `certificate_chain_depth` | Certificate message | 0 if none |
+| Feature | Source | Saturates at ("acceptable") |
+|---|---|---|
+| `protocol_version` (SSL 2.0 = 0 ... TLS 1.2 = 4, TLS 1.3 = 5) | ServerHello | TLS 1.2 |
+| `forward_secrecy` | cipher registry / TLS 1.3 | yes |
+| `aead_cipher` | cipher registry | yes |
+| `cipher_class` (insecure, weak, legacy, recommended) | cipher registry | recommended |
+| `key_exchange_security_bits` | DH prime size or named group (NIST SP 800-57) | 112 |
+| `certificate_key_security_bits` | leaf key (RSA/DSA modulus table, EC size / 2) | 112 |
+| `certificate_signature_hash` (MD5, SHA-1, SHA-2+) | leaf certificate | SHA-2 |
+| `certificate_valid_at_capture` | leaf certificate | yes |
+| `certificate_days_to_expiry` | leaf certificate | 30 days |
+| `certificate_not_self_signed` | leaf certificate (self-signature verified) | yes |
 
-Known weakness: "no certificate observed" (TLS 1.3) is encoded as zeros, so TLS 1.3
-sessions look unusual next to TLS 1.2 sessions in a mixed capture.
+### Preparation
 
-## Explanations
+1. **Saturate** each feature at its acceptable level: TLS 1.3 vs 1.2, or RSA-4096 vs RSA-2048,
+   are not differences an analyst needs flagged.
+2. **Norm** = per-feature median over the capture. Not-observable values count as acceptable
+   when computing the norm, so the few visible certificates of a mostly TLS 1.3 capture cannot
+   define it.
+3. **Not observable -> neutral:** a session's missing value (e.g. certificate in TLS 1.3) is
+   replaced by the norm. It is reported as `null` ("not observable"), never as 0.
+4. **One-sided:** each value is capped at the norm, so a session stronger than the norm looks
+   exactly like the norm.
+5. A session is reported as an outlier only if the forest scores it as an outlier **and** it is
+   below the norm on at least one feature. The explanation names those features, their values,
+   the norm and how common the value is in the capture.
 
-Each flagged session gets a level (mild / moderate / severe from the normalised decision
-score) and a *rareness* explanation naming the features whose values occur in <= 20% of
-the capture's sessions (e.g. `certificate_key_size=1024 (8% of sessions)`).
+### Changes from isolation-forest/1 and why
 
-## Measured results (not accuracy claims)
+| v1 problem (measured) | v2 change |
+|---|---|
+| Healthy minority configurations (TLS 1.3, ECDSA, stronger keys) flagged 98-99% of the time | Saturation + one-sided comparison |
+| TLS 1.3 certificates encoded as 0 made modern sessions look unusual | Missing values are neutral, reported as `null` |
+| Traffic volume (packets, duration) and certificate age drove flags | Removed; posture features only |
+| Cipher strength guessed from the suite name | Cipher registry properties (forward secrecy, AEAD, class) |
+| Scores clipped at -1, losing ranking | Scale widened (decision / 0.3) |
 
-There is **no independent labelled dataset**, so no precision/recall/accuracy is claimed.
-The following are observations on the repository's synthetic-framing / real-OpenSSL fixtures:
+The v1 model is kept unchanged in `backend/tests/ml_eval/v1_reference.py` for comparison.
 
-| Capture | TLS sessions evaluated | Flagged | Notes |
-|---|---|---|---|
-| `ml_mixed_estate.pcap` (11 TLS 1.2 ECDHE + 1 TLS 1.0 RSA-1024) | 12 | 1 | The single flagged session is the planted TLS 1.0 outlier |
-| Benchmark estate, 2,000 packets | 79 | 24 (30%) | All 5 deterministically weak sessions flagged; 19 other flags are minority configurations (TLS 1.3, implicit TLS) |
-| Benchmark estate, 10,000 packets | 383 | 119 (31%) | All 24 weak sessions flagged; 95 other flags |
+## Evaluation
 
-Interpretation: on heterogeneous captures the detector highlights *minority
-configurations*, which is useful for triage ("which endpoints behave differently?") but it
-is **not** a vulnerability detector, and its flag rate on mixed estates is high. Repeat
-analysis of the same capture produced identical scores in every run.
+### Data
+
+`backend/tests/ml_eval/pool/`: **80 real TLS mail sessions from 20 server configurations**
+(4 sessions each), generated by `lab/ml_eval_pool.py`: aiosmtpd (Python ssl / OpenSSL 3.0)
+server, Python smtplib client, recorded by the lab relay (application bytes and timing real,
+TCP/IP headers reconstructed). Each configuration is **labelled by design before analysis**:
+
+* 11 healthy: TLS 1.3 (RSA, ECDSA, implicit TLS), TLS 1.2 ECDHE with RSA-2048/3072/4096,
+  ECDSA P-256/P-384, AES-GCM and ChaCha20, DHE-2048, implicit TLS.
+* 9 weak: TLS 1.0 (two variants), TLS 1.1, static-RSA key exchange (two variants), expired
+  certificate, self-signed certificate, RSA-1024 certificate, 1024-bit DHE.
+
+The rule engine agrees with every label (no finding on healthy, the intended findings on weak).
+
+### Protocol
+
+For each scenario, 300 synthetic estates are composed by sampling pool sessions: 20-200
+sessions, one dominant configuration, 0-3 minority healthy configurations (2-10% each) and
+0-3 weak configurations (0-20%). The model is fitted per estate, as in the product.
+Configurations are split into halves A and B. Design decisions were made on A; B is held out.
+The "legacy fleet" scenario makes a weak configuration dominant.
+
+Reproduce: `cd backend; python -m tests.ml_eval.evaluate --estates 300`
+(output of the run documented here: `backend/tests/ml_eval/RESULTS.json`).
+
+### Results (300 estates per row)
+
+| Model | Scenario | Weak recall | Precision | Healthy minority flagged | Dominant config flagged | Clean estates with a flag | Mean flag rate |
+|---|---|---|---|---|---|---|---|
+| v1 | dev (A) | 0.983 | 0.240 | 0.993 | 0.125 | 60/60 | 26.2% |
+| v1 | held-out (B) | 0.982 | 0.208 | 0.976 | 0.144 | 70/70 | 28.7% |
+| v1 | legacy fleet (B) | 0.985 | 0.171 | 0.988 | 0.161 | 78/78 | 27.4% |
+| **v2** | dev (A) | **1.000** | **1.000** | **0.000** | **0.000** | **0/60** | 6.5% |
+| **v2** | held-out (B) | **1.000** | **1.000** | **0.000** | **0.000** | **0/70** | 6.0% |
+| **v2** | legacy fleet (B) | **1.000** | **1.000** | **0.000** | **0.000** | **0/78** | 5.0% |
+
+On the benchmark estates built from the fixture captures (`tests/performance/benchmark.py`),
+v1 flagged 24 of 79 and 119 of 383 TLS sessions; v2 flags 5 of 79 and 24 of 383, exactly the
+sessions the rule engine reports as HIGH/CRITICAL.
+
+### What these numbers do and do not show
+
+* **They show** that v2 does what it is designed to do on real sessions: it no longer flags
+  healthy diversity, and it flags minority weaknesses in both splits and in legacy fleets.
+* **They do not show real-world accuracy.** The pool is lab-generated, the weak/healthy
+  separation is clean by construction (every weak configuration is below the acceptable level
+  on at least one engineered feature), and borderline configurations (e.g. TLS 1.2 ECDHE with
+  CBC suites) are not in the pool. Perfect scores here mean the test no longer discriminates,
+  not that the model is perfect.
+* **The forest adds little over a simple rule.** On this pool, "flag any session below the
+  capture norm on any feature" gives identical recall and false-positive rates for every weak
+  share from 2% to 49%. The improvement comes from the feature design. What the forest adds
+  is a graded score: a session with more below-norm features scores as more anomalous in 72% of
+  comparable pairs (50% would be chance). No claim is made that the forest detects anything the
+  rules do not.
+* The flagged sessions largely coincide with rule findings. The ML stage's practical value is
+  prioritising which minority servers differ from the estate, with an explanation, not new detection.
+
+### Known behaviour
+
+* A weakness shared by most of the capture defines the norm and is not an outlier (a fully
+  legacy fleet is not flagged); the deterministic rules still report it.
+* Up to 49% weak share the outliers were still flagged in the evaluation; at a majority the
+  weakness becomes the norm.
+* Fewer than 5 TLS sessions: no ML result (`insufficient_sessions (<5)`).
+* Results are deterministic (fixed seed; repeat runs identical).
 
 ## What would be needed for stronger claims
 
-* A labelled corpus of real mail-server captures (independent of the fixtures) to measure
-  precision/recall.
-* A persisted baseline model per organisation instead of per-capture fitting.
-* Encoding "not observable" explicitly (indicator features) instead of zeros.
+* Labelled captures from real, independently operated mail servers, including borderline
+  configurations, to measure precision/recall outside the lab.
+* A persisted organisational baseline (instead of per-capture fitting) so that a fleet-wide
+  weakness can also be compared against a target posture.
