@@ -33,4 +33,5 @@ frontend/dist/
 
 # Mail lab binaries (downloaded; see lab/README.md)
 /lab/tools/
-__pycache__/
+
+/backend/tests/external_captures/downloads/

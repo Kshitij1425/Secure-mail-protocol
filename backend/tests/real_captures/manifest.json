@@ -9,7 +9,7 @@
     "python": "3.12.5",
     "openssl": "OpenSSL 3.0.13 30 Jan 2024"
   },
-  "not_covered_here": "IMAP / IMAPS (no IMAP server available without installation); see lab/docker for a Postfix + Dovecot + tcpdump lab producing raw packet captures.",
+  "not_covered_here": "Raw kernel-level packet capture: no capture driver (Npcap/WinPcap), Docker or WSL was available in the generating environment; see lab/docker for a Postfix + Dovecot + tcpdump lab.",
   "captures": [
     {
       "name": "real_smtp_starttls_tls13",
@@ -267,6 +267,163 @@
         }
       ],
       "notes": "Client capped at TLS 1.2 so that the new certificate is observable."
+    },
+    {
+      "name": "real_imaps_tls12_chain",
+      "file": "real_imaps_tls12_chain.pcap",
+      "sha256": "e16c92ff03ebd49d05c4220e62ba18b9adec125715f6da22051bd2523ae7f7c6",
+      "frames": 24,
+      "intended_condition": "Secure IMAPS: implicit TLS on 993, TLS 1.2 ECDHE-RSA-AES256-GCM, leaf + intermediate",
+      "servers": [
+        "pymap 0.36.7"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "IMAP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.2",
+          "findings": [],
+          "certificates": 2,
+          "implicit_tls": true,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": ""
+    },
+    {
+      "name": "real_imaps_tls13",
+      "file": "real_imaps_tls13.pcap",
+      "sha256": "16501486a80527bb6e35e336234c6584f295722401b074ad1e75556abafe936c",
+      "frames": 24,
+      "intended_condition": "Secure IMAPS: implicit TLS on 993 negotiating TLS 1.3",
+      "servers": [
+        "pymap 0.36.7"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "IMAP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.3",
+          "findings": [],
+          "certificates": 0,
+          "implicit_tls": true,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": "TLS 1.3 encrypts the server certificate; it must be reported as not observable."
+    },
+    {
+      "name": "real_imap_starttls_tls12",
+      "file": "real_imap_starttls_tls12.pcap",
+      "sha256": "e73ba90cc2f415031716d9dcb7d2092abbe72ccc5830663085878735985c72ae",
+      "frames": 29,
+      "intended_condition": "Secure IMAP STARTTLS on 143: STARTTLS advertised, requested and accepted; TLS 1.2 ECDHE/AEAD",
+      "servers": [
+        "pymap 0.36.7"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "IMAP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.2",
+          "findings": [],
+          "certificates": 2,
+          "implicit_tls": false,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": ""
+    },
+    {
+      "name": "real_imap_starttls_weak_tls10",
+      "file": "real_imap_starttls_weak_tls10.pcap",
+      "sha256": "311269df04aaac3c7984da11643e3506170bc9120533c6b4f8d85c68972a1f10",
+      "frames": 28,
+      "intended_condition": "Weak IMAP STARTTLS: TLS 1.0, TLS_RSA_WITH_AES_128_CBC_SHA (no forward secrecy), expired self-signed RSA-1024 certificate",
+      "servers": [
+        "pymap 0.36.7 (Python ssl / OpenSSL 3.0.13 30 Jan 2024)"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "IMAP",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.0",
+          "findings": [
+            "CERT-001",
+            "CERT-003",
+            "CERT-005",
+            "TLS-001",
+            "TLS-004"
+          ],
+          "certificates": 1,
+          "implicit_tls": false,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": ""
+    },
+    {
+      "name": "real_imap_starttls_rejected_plain_login",
+      "file": "real_imap_starttls_rejected_plain_login.pcap",
+      "sha256": "6fde6565a500bfb3eaf17e51c8cd1fc46dc39c7e29b02127e1d3d809a2e33b3b",
+      "frames": 21,
+      "intended_condition": "Insecure IMAP: STARTTLS not advertised and rejected (NO [CANNOT]); LOGIN and mailbox access in plaintext",
+      "servers": [
+        "pymap 0.36.7"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "IMAP",
+          "starttls_state": "STARTTLS_REJECTED",
+          "tls_version": null,
+          "findings": [
+            "PROTO-001",
+            "PROTO-002",
+            "STLS-001"
+          ],
+          "certificates": 0,
+          "implicit_tls": false,
+          "handshake_status": null
+        }
+      ],
+      "notes": "Credential values must not appear in any SecureMailScope output."
+    },
+    {
+      "name": "real_pop3s_expired_selfsigned",
+      "file": "real_pop3s_expired_selfsigned.pcap",
+      "sha256": "4c16a1a983481ad481646f1babc398d355394a49061d7970e0c3ff1041fcdada",
+      "frames": 19,
+      "intended_condition": "Weak POP3S: implicit TLS on 995 (TLS 1.2) with a self-signed certificate that expired 15 days before capture",
+      "servers": [
+        "Mailpit v1.31.2"
+      ],
+      "client": "Python 3.12.5 smtplib/poplib, OpenSSL 3.0.13 30 Jan 2024",
+      "expected_sessions": [
+        {
+          "protocol": "POP3",
+          "starttls_state": "TLS_ESTABLISHED",
+          "tls_version": "TLSv1.2",
+          "findings": [
+            "CERT-001",
+            "CERT-005"
+          ],
+          "certificates": 1,
+          "implicit_tls": true,
+          "handshake_status": "complete"
+        }
+      ],
+      "notes": ""
     }
-  ]
+  ],
+  "updated_at": "2026-09-27T10:19:58.338362+00:00",
+  "servers": {
+    "Mailpit": "v1.31.2 (lab/tools/mailpit.exe, SHA-256 in lab/README.md)",
+    "aiosmtpd": "1.4.6",
+    "pymap": "0.36.7 in lab/tools/imapvenv, started by lab/imap_server.py"
+  }
 }

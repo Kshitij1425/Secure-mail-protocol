@@ -3,13 +3,16 @@ Real mail server/client capture lab (controlled local test environment).
 
 Servers:  Mailpit (Go, crypto/tls) - SMTP (STARTTLS / implicit TLS) and POP3S
           aiosmtpd (Python, OpenSSL) - legacy TLS 1.0 SMTP and plaintext SMTP
-Clients:  Python standard library smtplib / poplib (OpenSSL)
+          pymap 0.36.7 (Python IMAP4rev1 server, OpenSSL) - IMAP STARTTLS, IMAPS, plaintext IMAP
+          (runs in lab/tools/imapvenv via lab/imap_server.py)
+Clients:  Python standard library smtplib / poplib / imaplib (OpenSSL)
 Capture:  lab/recording_relay.py (application bytes + timing are real; TCP/IP headers reconstructed)
 
 Everything listens on 127.0.0.1 only. Weak configurations exist only inside this lab.
 
 Usage (from the repository root):
     python lab/real_mail_lab.py            # writes backend/tests/real_captures/*.pcap + manifest.json
+    python lab/real_mail_lab.py --only-imap-pop3   # only the IMAP / weak POP3 scenarios; merges manifest
 """
 import json
 import hashlib
@@ -32,6 +35,8 @@ from lab.pki import issue, lab_chain  # noqa: E402
 from lab.recording_relay import RecordingRelay, write_pcap  # noqa: E402
 
 MAILPIT = ROOT / "lab" / "tools" / "mailpit.exe"
+IMAP_PY = ROOT / "lab" / "tools" / "imapvenv" / "Scripts" / "python.exe"
+IMAP_USER, IMAP_PASSWORD = "alice", "lab-imap-password"
 OUT = ROOT / "backend" / "tests" / "real_captures"
 HOST = socket.gethostname().encode()
 # Mailpit greets with the OS hostname; replace it (same length) in plaintext bytes only.
@@ -113,8 +118,31 @@ class Lab:
         self.controllers.append(c)
         return port
 
+    def imap(self, mode, *, cert=None, chain=(), min_tls=None, max_tls=None, ciphers=None):
+        """pymap IMAP server: mode = starttls (143) | implicit (IMAPS, 993) | plaintext."""
+        if not IMAP_PY.exists():
+            raise RuntimeError("IMAP lab server not installed: python -m venv lab/tools/imapvenv && "
+                               "lab/tools/imapvenv/Scripts/python -m pip install pymap==0.36.7")
+        port = free_port()
+        args = [str(IMAP_PY), str(ROOT / "lab" / "imap_server.py"), "--port", str(port), "--mode", mode,
+                "--user", IMAP_USER, "--password", IMAP_PASSWORD]
+        if cert:
+            args += ["--cert", self.write(f"i{port}.pem", cert.pem + b"".join(c.pem for c in chain)),
+                     "--key", self.write(f"i{port}.key", cert.key_pem)]
+        for flag, val in (("--min-tls", min_tls), ("--max-tls", max_tls), ("--ciphers", ciphers)):
+            if val:
+                args += [flag, val]
+        p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             text=True)
+        self.procs.append(p)
+        if not p.stdout.readline().startswith("READY"):
+            raise RuntimeError("IMAP lab server did not start")
+        return port
+
     def close(self):
         for p in self.procs:
+            if p.stdin:
+                p.stdin.close()
             p.terminate()
             p.wait(5)
         for c in self.controllers:
@@ -147,7 +175,85 @@ def session(protocol, state, version, findings, certs=0, implicit=False, handsha
             "certificates": certs, "implicit_tls": implicit, "handshake_status": handshake}
 
 
-def run():
+def imap_session(port, ctx=None, implicit=False, starttls=False, try_starttls=False):
+    """Real imaplib client: (STARTTLS) LOGIN, SELECT INBOX, FETCH flags/size of message 1, LOGOUT."""
+    import imaplib
+    m = imaplib.IMAP4_SSL("127.0.0.1", port, ssl_context=ctx, timeout=10) if implicit else \
+        imaplib.IMAP4("127.0.0.1", port, timeout=10)
+    if starttls:
+        m.starttls(ssl_context=ctx)
+    if try_starttls:
+        m._simple_command("STARTTLS")  # rejected by a server without TLS; the client continues anyway
+    m.login(IMAP_USER, IMAP_PASSWORD)
+    m.select("INBOX")
+    m.fetch("1", "(FLAGS RFC822.SIZE)")
+    m.logout()
+
+
+def imap_pop3_scenarios(lab, save):
+    """Real IMAP (pymap) scenarios and a weak POP3S (Mailpit) scenario."""
+    # 10. IMAPS (implicit TLS, 993), TLS 1.2 ECDHE/AEAD, leaf + intermediate (certificate observable)
+    _, inter, leaf = lab_chain("imap.lab.test")
+    p = lab.imap("implicit", cert=leaf, chain=[inter], max_tls="1.2", ciphers="ECDHE-RSA-AES256-GCM-SHA384")
+    with relay(p, 993, "10.77.4.10", "10.77.0.143") as r:
+        imap_session(r.port, client_ctx(), implicit=True)
+    save("real_imaps_tls12_chain", [r], "Secure IMAPS: implicit TLS on 993, TLS 1.2 ECDHE-RSA-AES256-GCM, leaf + intermediate",
+         [session("IMAP", "TLS_ESTABLISHED", "TLSv1.2", [], certs=2, implicit=True)], ["pymap 0.36.7"])
+
+    # 11. IMAPS with TLS 1.3 (certificate encrypted by the protocol)
+    _, inter, leaf = lab_chain("imap.lab.test")
+    p = lab.imap("implicit", cert=leaf, chain=[inter])
+    with relay(p, 993, "10.77.4.11", "10.77.0.144") as r:
+        imap_session(r.port, client_ctx(), implicit=True)
+    save("real_imaps_tls13", [r], "Secure IMAPS: implicit TLS on 993 negotiating TLS 1.3",
+         [session("IMAP", "TLS_ESTABLISHED", "TLSv1.3", [], implicit=True)], ["pymap 0.36.7"],
+         "TLS 1.3 encrypts the server certificate; it must be reported as not observable.")
+
+    # 12. IMAP + STARTTLS on 143, TLS 1.2 (client capped so the certificate is observable)
+    _, inter, leaf = lab_chain("imap.lab.test")
+    p = lab.imap("starttls", cert=leaf, chain=[inter])
+    with relay(p, 143, "10.77.4.12", "10.77.0.145") as r:
+        imap_session(r.port, client_ctx(max_v=ssl.TLSVersion.TLSv1_2), starttls=True)
+    save("real_imap_starttls_tls12", [r], "Secure IMAP STARTTLS on 143: STARTTLS advertised, requested and accepted; "
+         "TLS 1.2 ECDHE/AEAD", [session("IMAP", "TLS_ESTABLISHED", "TLSv1.2", [], certs=2)], ["pymap 0.36.7"])
+
+    # 13. Weak IMAP STARTTLS: TLS 1.0, static RSA, expired self-signed RSA-1024 certificate
+    bad = issue("legacy-imap.lab.test", san=["legacy-imap.lab.test"], key_bits=1024, valid_from_days=-700,
+                valid_to_days=-3)
+    p = lab.imap("starttls", cert=bad, min_tls="1.0", max_tls="1.0", ciphers="AES128-SHA:@SECLEVEL=0")
+    with relay(p, 143, "10.77.4.13", "10.77.0.146") as r:
+        imap_session(r.port, client_ctx(min_v=ssl.TLSVersion.TLSv1, max_v=ssl.TLSVersion.TLSv1,
+                                        ciphers="AES128-SHA:@SECLEVEL=0"), starttls=True)
+    save("real_imap_starttls_weak_tls10", [r], "Weak IMAP STARTTLS: TLS 1.0, TLS_RSA_WITH_AES_128_CBC_SHA (no forward "
+         "secrecy), expired self-signed RSA-1024 certificate",
+         [session("IMAP", "TLS_ESTABLISHED", "TLSv1.0", ["CERT-001", "CERT-003", "CERT-005", "TLS-001", "TLS-004"],
+                  certs=1)], ["pymap 0.36.7 (Python ssl / " + ssl.OPENSSL_VERSION + ")"])
+
+    # 14. Insecure IMAP: server without TLS rejects STARTTLS; client logs in and reads the mailbox in plaintext
+    p = lab.imap("plaintext")
+    with relay(p, 143, "10.77.4.14", "10.77.0.147") as r:
+        imap_session(r.port, try_starttls=True)
+    save("real_imap_starttls_rejected_plain_login", [r],
+         "Insecure IMAP: STARTTLS not advertised and rejected (NO [CANNOT]); LOGIN and mailbox access in plaintext",
+         [session("IMAP", "STARTTLS_REJECTED", None, ["PROTO-001", "PROTO-002", "STLS-001"], handshake=None)],
+         ["pymap 0.36.7"], "Credential values must not appear in any SecureMailScope output.")
+
+    # 15. Weak POP3S: Mailpit POP3 over implicit TLS with an expired self-signed certificate
+    bad = issue("pop.lab.test", san=["pop.lab.test"], valid_from_days=-400, valid_to_days=-15)
+    _, p_pop = lab.mailpit(cert=bad, pop3=True)
+    with relay(p_pop, 995, "10.77.4.15", "10.77.0.111") as r:
+        pp = poplib.POP3_SSL("127.0.0.1", r.port, context=client_ctx(max_v=ssl.TLSVersion.TLSv1_2), timeout=10)
+        pp.user("alice")
+        pp.pass_("secret")
+        pp.stat()
+        pp.quit()
+    save("real_pop3s_expired_selfsigned", [r], "Weak POP3S: implicit TLS on 995 (TLS 1.2) with a self-signed "
+         "certificate that expired 15 days before capture",
+         [session("POP3", "TLS_ESTABLISHED", "TLSv1.2", ["CERT-001", "CERT-005"], certs=1, implicit=True)],
+         ["Mailpit v1.31.2"])
+
+
+def run(only_imap_pop3=False):
     OUT.mkdir(parents=True, exist_ok=True)
     lab = Lab()
     captures = []
@@ -164,6 +270,9 @@ def run():
         print(f"{name}: {frames} frames")
 
     try:
+        if only_imap_pop3:
+            imap_pop3_scenarios(lab, save)
+            return
         # 1. Secure modern TLS: STARTTLS on 587, TLS 1.3 (certificate encrypted by the protocol)
         _, inter, leaf = lab_chain("mail.lab.test")
         p, _ = lab.mailpit(cert=leaf, chain=[inter])
@@ -289,8 +398,11 @@ def run():
              "(ECDHE, AEAD) and a new CA-issued RSA-2048 certificate chain",
              [session("SMTP", "TLS_ESTABLISHED", "TLSv1.2", [], certs=2)], ["Mailpit v1.31.2"],
              "Client capped at TLS 1.2 so that the new certificate is observable.")
+        imap_pop3_scenarios(lab, save)
     finally:
         lab.close()
+        if only_imap_pop3:
+            _merge_manifest(captures)
 
     manifest = {
         "description": "Real email server/client captures generated in a controlled local test environment "
@@ -304,13 +416,30 @@ def run():
         "plaintext_substitutions": "The lab host's name in Mailpit's plaintext greeting was replaced by a placeholder of "
                                    "equal length before TLS; no TLS bytes were modified.",
         "environment": {"os": platform.platform(), "python": platform.python_version(), "openssl": ssl.OPENSSL_VERSION},
-        "not_covered_here": "IMAP / IMAPS (no IMAP server available without installation); see lab/docker for a "
-                            "Postfix + Dovecot + tcpdump lab producing raw packet captures.",
+        "not_covered_here": NOT_COVERED,
         "captures": captures,
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"manifest: {OUT / 'manifest.json'}")
 
 
+NOT_COVERED = ("Raw kernel-level packet capture: no capture driver (Npcap/WinPcap), Docker or WSL was available "
+               "in the generating environment; see lab/docker for a Postfix + Dovecot + tcpdump lab.")
+
+
+def _merge_manifest(new_captures):
+    """Replace / append the given scenarios in the existing manifest, keeping every other entry unchanged."""
+    path = OUT / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    names = {c["name"] for c in new_captures}
+    manifest["captures"] = [c for c in manifest["captures"] if c["name"] not in names] + new_captures
+    manifest["not_covered_here"] = NOT_COVERED
+    manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+    manifest["servers"] = {"Mailpit": "v1.31.2 (lab/tools/mailpit.exe, SHA-256 in lab/README.md)",
+                           "aiosmtpd": "1.4.6", "pymap": "0.36.7 in lab/tools/imapvenv, started by lab/imap_server.py"}
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"manifest updated: {path}")
+
+
 if __name__ == "__main__":
-    run()
+    run(only_imap_pop3="--only-imap-pop3" in sys.argv)
