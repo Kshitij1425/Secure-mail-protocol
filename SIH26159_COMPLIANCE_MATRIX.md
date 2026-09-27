@@ -28,7 +28,7 @@ with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established 
 | T | JSON report | FULL | `reports/document.py` | `test_reports_all_formats`, CLI tests |
 | U | HTML report | FULL | Jinja2 template, escaped, CSP | same |
 | V | PDF report | FULL | ReportLab (dependency declared) | same; browser E2E download |
-| W | Interactive dashboard | FULL | 8-step workflow: Capture, Analyze, Posture, Findings (why am I seeing this, evidence chain), Sessions (server grouping, timeline), Certificates (inventory, related findings), Evidence (register, timeline), Report (raw/redacted, bundle, STIX); ML anomalies, compare and trend, analyst notes | scripted Playwright walkthrough (80 checks, 0 console/HTTP errors) |
+| W | Interactive dashboard | FULL | 8-step workflow: Capture, Analyze, Posture, Findings (why am I seeing this, evidence chain), Sessions (server grouping, timeline), Certificates (inventory, related findings), Evidence (register, timeline), Report (raw/redacted, bundle, STIX); ML anomalies, compare and trend, analyst notes | scripted walkthrough of every control (112 checks, 0 console/HTTP errors); axe scan 0 violations |
 
 Technically incorrect claims found in earlier documentation and corrected: TLS 1.3
 certificate extraction, "chain validation" (only leaf parsing existed), "AI-based" posture
@@ -37,8 +37,8 @@ measured on 3-30 packet files.
 
 ## SIH26159 readiness check (2026-09-27)
 
-Verified on this date with the full test suite (411 tests), the 28 fixture captures, 15 real lab
-captures, 5 external public captures and a scripted browser walkthrough (80 checks).
+Verified on this date with the full test suite (414 tests, none skipped), the 28 fixture captures, 15 real lab
+captures, 5 external public captures and a scripted browser walkthrough of every control (`qa/e2e_walkthrough.py`, 112 checks) and an axe accessibility scan of every route (`qa/a11y_scan.py`, 0 violations).
 
 | Area | Status | Verified by |
 |---|---|---|

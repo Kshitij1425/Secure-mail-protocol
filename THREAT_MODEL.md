@@ -50,6 +50,7 @@ hand an analyst a file) controls every byte the analyzer parses.
 | T22 | Stored XSS / injection via analyst notes (free text) | React text rendering; Jinja2 autoescape in HTML reports; ReportLab escaping in PDF; 4000-character limit; notes must target an item of the same analysis | `test_hostile_note_text_is_escaped_in_reports`, `test_annotations_validate_targets_and_persist` |
 | T23 | Identifying data in notes leaking through redacted reports | Notes are redacted with the rest of the document (addresses, host names, e-mail); other free text is documented as not redacted; only notes selected for the report are included | `test_selected_annotations_appear_in_reports_and_are_redacted` |
 | T24 | Blocked or broken methods through a wrong CORS policy | Allow-list origins; every method the dashboard uses is allowed, foreign origins receive no CORS grant | `test_cors_preflight_allows_every_method_the_dashboard_uses` |
+| T25 | Script execution through the in-app report preview | Preview shows the generated HTML report in an iframe with `sandbox="allow-same-origin"` (no scripts), plus the report's own CSP (`default-src 'none'`) and Jinja2 autoescaping | `test_report_preview_is_the_real_report`, `test_hostile_note_text_is_escaped_in_reports` |
 | T21 | Overstated conclusions in exports (STIX indicators, "malicious", "AI detected") | STIX contains observed-data and notes only; ML wording "requires investigation" | `test_stix_export_is_valid_observation_only`, UI wording check |
 
 ## Residual risks (accepted, documented)

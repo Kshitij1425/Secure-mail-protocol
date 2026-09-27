@@ -87,11 +87,11 @@ Anomalies:        []
 
 ## 3. Direct orchestrator trace
 
-The direct run used the real [Orchestrator](backend/securemailscope/core/orchestrator.py), bypassing FastAPI and SQLite.
+The direct run used the real [Orchestrator](../../backend/securemailscope/core/orchestrator.py), bypassing FastAPI and SQLite.
 
 ### Ingestion and reconstruction
 
-The [PcapIngestor](backend/securemailscope/ingestion/reader.py) reported:
+The [PcapIngestor](../../backend/securemailscope/ingestion/reader.py) reported:
 
 ```text
 total_packets     = 175
@@ -100,7 +100,7 @@ malformed_packets = 0
 ignored_non_ip    = 0
 ```
 
-The [TCPReconstructor](backend/securemailscope/tcp/stream.py) produced 27 streams.
+The [TCPReconstructor](../../backend/securemailscope/tcp/stream.py) produced 27 streams.
 
 ### Protocol and TLS analysis
 
@@ -168,7 +168,7 @@ This is the direct cause of the three zero capture counters in the API.
 
 ## 4. M11 behavior
 
-The rich capture had three TLS sessions before M11. The [orchestrator](backend/securemailscope/core/orchestrator.py) only enters M11 when at least three TLS session records are available.
+The rich capture had three TLS sessions before M11. The [orchestrator](../../backend/securemailscope/core/orchestrator.py) only enters M11 when at least three TLS session records are available.
 
 A traced direct run showed:
 
@@ -179,7 +179,7 @@ trained_sessions = 3
 current direct run anomaly results = 1
 ```
 
-The original API capture still has zero persisted anomalies because [AnalysisService._store_anomalies](backend/securemailscope/api/services/analyzers.py) is an empty placeholder. The same persistence result was reproduced for the fresh upload.
+The original API capture still has zero persisted anomalies because [AnalysisService._store_anomalies](../../backend/securemailscope/api/services/analyzers.py) is an empty placeholder. The same persistence result was reproduced for the fresh upload.
 
 Therefore:
 
@@ -320,11 +320,11 @@ The frontend receives empty arrays from the API; it is not discarding populated 
 
 Relevant frontend files:
 
-- [frontend/src/pages/OverviewPage.tsx](frontend/src/pages/OverviewPage.tsx)
-- [frontend/src/pages/SessionsPage.tsx](frontend/src/pages/SessionsPage.tsx)
-- [frontend/src/pages/CertificatesPage.tsx](frontend/src/pages/CertificatesPage.tsx)
-- [frontend/src/pages/AnomaliesPage.tsx](frontend/src/pages/AnomaliesPage.tsx)
-- [frontend/src/lib/api.ts](frontend/src/lib/api.ts)
+- [frontend/src/pages/OverviewPage.tsx](../../frontend/src/pages/OverviewPage.tsx)
+- [frontend/src/pages/SessionsPage.tsx](../../frontend/src/pages/SessionsPage.tsx)
+- [frontend/src/pages/CertificatesPage.tsx](../../frontend/src/pages/CertificatesPage.tsx)
+- [frontend/src/pages/AnomaliesPage.tsx](../../frontend/src/pages/AnomaliesPage.tsx)
+- [frontend/src/lib/api.ts](../../frontend/src/lib/api.ts)
 
 The frontend state and filtering logic are consistent with the API responses. The data has already been lost before rendering.
 
@@ -332,7 +332,7 @@ The frontend state and filtering logic are consistent with the API responses. Th
 
 ### Point 1: capture counter metadata contract mismatch
 
-In [AnalysisService._process_analysis_results](backend/securemailscope/api/services/analyzers.py), the service assigns:
+In [AnalysisService._process_analysis_results](../../backend/securemailscope/api/services/analyzers.py), the service assigns:
 
 ```python
 capture.packet_count = metadata.get("packet_count", 0)
@@ -356,15 +356,15 @@ The analysis service has no implementation that converts reconstructed streams i
 
 ### Point 3: no certificate persistence
 
-[AnalysisService._store_certificates](backend/securemailscope/api/services/analyzers.py) contains only a comment and `pass`. The three certificates extracted by the orchestrator are not persisted.
+[AnalysisService._store_certificates](../../backend/securemailscope/api/services/analyzers.py) contains only a comment and `pass`. The three certificates extracted by the orchestrator are not persisted.
 
 ### Point 4: no anomaly persistence
 
-[AnalysisService._store_anomalies](backend/securemailscope/api/services/analyzers.py) contains only a comment and `pass`. M11 output cannot reach the `anomalies` table.
+[AnalysisService._store_anomalies](../../backend/securemailscope/api/services/analyzers.py) contains only a comment and `pass`. M11 output cannot reach the `anomalies` table.
 
 ### Point 5: findings are detached aggregate projections
 
-[_store_findings](backend/securemailscope/api/services/analyzers.py) iterates over `posture_score.top_contributors`, rather than the raw `FindingResult` objects. It creates five aggregate rows with `session_id=None`. This is why findings appear while the evidence-bearing session and certificate inventories are empty.
+[_store_findings](../../backend/securemailscope/api/services/analyzers.py) iterates over `posture_score.top_contributors`, rather than the raw `FindingResult` objects. It creates five aggregate rows with `session_id=None`. This is why findings appear while the evidence-bearing session and certificate inventories are empty.
 
 ## 9. Finding/session consistency
 

@@ -1,5 +1,5 @@
 """
-Targeted regression tests for defects found during the audit (see VULNERABILITY_REMEDIATION.md).
+Targeted regression tests for defects found during the audit (see docs/audit-2026-09-26/VULNERABILITY_REMEDIATION.md).
 """
 import struct
 from datetime import datetime, timedelta, timezone

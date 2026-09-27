@@ -88,8 +88,10 @@ data reassembled from several segments, the frame is the one that made the data 
 * The live NTRO website could not be reached from the build environment; archived public pages
   of NTRO and NCIIPC and the public GIGW 3.0 guidance informed the restrained layout (see
   DESIGN_SYSTEM.md). No government emblem, seal, logo, branding or content is used.
-* Browser verification is a scripted Playwright walkthrough plus manual review in Chromium;
-  other browsers and screen readers were not tested.
+* Browser verification: scripted walkthrough of every control (`qa/e2e_walkthrough.py`) and an axe-core
+  WCAG 2.0/2.1/2.2 A/AA scan of every route and drawer in normal and high-contrast mode at 1440 px and
+  390 px (`qa/a11y_scan.py`, 0 violations), in Chromium only. Other browsers and screen readers
+  (NVDA, JAWS, VoiceOver) were not tested; automated rules do not replace a manual accessibility review.
 
 ## Test data
 

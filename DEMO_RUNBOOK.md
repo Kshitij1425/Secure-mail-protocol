@@ -1,6 +1,6 @@
 # Demo Runbook
 
-Verified end-to-end in a browser on 2026-09-27 (Windows 11, Python 3.12.5, Node 24; scripted Playwright walkthrough, 80 checks).
+Verified end-to-end in a browser on 2026-09-27 (Windows 11, Python 3.12.5, Node 24; scripted walkthrough `qa/e2e_walkthrough.py`, 112 checks, and `qa/a11y_scan.py`, 0 axe violations).
 
 ## 1. Start
 
@@ -40,8 +40,9 @@ older schema is moved aside to `securemailscope.db.schema-v1-<timestamp>.bak`.
    certificate findings on those sessions, notes.
 7. **Evidence**: numbered evidence register (frame, capture time, evidence class) and the full
    capture timeline (arrow keys switch tabs).
-8. **Report**: raw or redacted PDF / HTML / JSON (14 sections; Appendix A lists items you selected),
-   evidence bundle, STIX 2.1.
+8. **Report**: choose raw or redacted, *Preview report* (the real HTML report with section navigation),
+   then download PDF / HTML / JSON (14 sections; Appendix A lists items you selected), the evidence
+   bundle or STIX 2.1.
 
 Supporting views: **ML anomalies** (deterministic vs ML explained, limitations), **Compare and
 trend**, **About and limitations**. Each step page links to the previous and next step; Esc

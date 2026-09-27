@@ -2,7 +2,7 @@
   "description": "Real email server/client captures generated in a controlled local test environment (not real-world or enterprise traffic).",
   "generated_at": "2026-09-27T07:30:28.022512+00:00",
   "generator": "lab/real_mail_lab.py",
-  "capture_method": "lab/recording_relay.py: application-layer bytes (SMTP/POP3 dialogue and TLS records) and their timing are exactly as exchanged by the real client and server; Ethernet/IPv4/TCP headers are reconstructed (lab addresses 10.77.0.0/16, standard server ports). No raw packet capture driver was available in the generating environment.",
+  "capture_method": "lab/recording_relay.py: application-layer bytes (SMTP/IMAP/POP3 dialogue and TLS records) and their timing are exactly as exchanged by the real client and server; Ethernet/IPv4/TCP headers are reconstructed (lab addresses 10.77.0.0/16, standard server ports). No raw packet capture driver was available in the generating environment.",
   "plaintext_substitutions": "The lab host's name in Mailpit's plaintext greeting was replaced by a placeholder of equal length before TLS; no TLS bytes were modified.",
   "environment": {
     "os": "Windows-11-10.0.26200-SP0",

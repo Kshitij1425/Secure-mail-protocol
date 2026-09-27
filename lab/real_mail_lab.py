@@ -409,7 +409,7 @@ def run(only_imap_pop3=False):
                        "(not real-world or enterprise traffic).",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generator": "lab/real_mail_lab.py",
-        "capture_method": "lab/recording_relay.py: application-layer bytes (SMTP/POP3 dialogue and TLS records) and "
+        "capture_method": "lab/recording_relay.py: application-layer bytes (SMTP/IMAP/POP3 dialogue and TLS records) and "
                           "their timing are exactly as exchanged by the real client and server; Ethernet/IPv4/TCP headers "
                           "are reconstructed (lab addresses 10.77.0.0/16, standard server ports). No raw packet capture "
                           "driver was available in the generating environment.",

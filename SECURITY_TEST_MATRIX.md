@@ -45,6 +45,7 @@ use Hypothesis: 150 examples per property in CI, 3000 in the deep campaign (`HYP
 | API | CORS preflight for GET/POST/PATCH/DELETE; foreign origin | `test_cors_preflight_allows_every_method_the_dashboard_uses` | Allowed for the dashboard origin only |
 | Captures | Plaintext credentials in real SMTP AUTH and IMAP LOGIN captures | `test_real_plaintext_credentials_not_persisted` (DB, document, bundle, STIX, JSON/HTML reports) | Never stored or output |
 | Captures | External captures | `test_external_captures.py` (pinned SHA-256; mismatching files deleted by the fetcher) | Verified before use |
+| Frontend | Report preview (untrusted capture strings in HTML) | sandboxed iframe without scripts + report CSP; escaping tests above | No script execution |
 | Frontend | Unsafe HTML/URL sinks | grep for `dangerouslySetInnerHTML`, `innerHTML`, `eval`, `javascript:` | None; all values rendered as text |
 | Dependencies | Known CVEs | `pip-audit -r requirements.lock`, `npm audit` | 0 / 0 |
 | Static analysis | Python SAST | `bandit -r securemailscope` | 0 issues |
