@@ -1,104 +1,93 @@
 import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UploadCloud, File as FileIcon, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
-import { errorMessage, uploadPcap } from '../lib/api';
+import { FileUp } from 'lucide-react';
+import { errorMessage, getPolicies, uploadPcap } from '../lib/api';
 import { useCapture } from '../context/CaptureContext';
+import { useAsync } from '../hooks/useAsync';
+import { Breadcrumbs, PageTitle, Panel } from '../components/ui';
 
 const MAX_MB = 100;
 const EXTENSIONS = ['pcap', 'pcapng', 'cap'];
 
 export const UploadPage = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [policy, setPolicy] = useState('balanced');
+  const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const policies = useAsync(getPolicies, 'policies');
   const { refreshCaptures, setActiveCaptureId } = useCapture();
   const navigate = useNavigate();
+  const selected = policies.data?.find((p) => p.id === policy);
 
   const choose = (f: File | undefined) => {
     setError(null);
     if (!f) return;
     const ext = f.name.toLowerCase().split('.').pop() ?? '';
-    if (!EXTENSIONS.includes(ext)) return setError('Only .pcap, .pcapng and .cap files are accepted.');
+    if (!EXTENSIONS.includes(ext)) return setError('Choose a .pcap, .pcapng or .cap file.');
     if (f.size === 0) return setError('The selected file is empty.');
-    if (f.size > MAX_MB * 1024 * 1024) return setError(`File exceeds the ${MAX_MB} MB upload limit.`);
+    if (f.size > MAX_MB * 1024 * 1024) return setError(`The file is larger than the ${MAX_MB} MB upload limit.`);
     setFile(f);
   };
 
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    choose(e.dataTransfer.files?.[0]);
-  };
-
-  const upload = async () => {
+  const run = async () => {
     if (!file) return;
-    setUploading(true);
+    setBusy(true);
     setProgress(0);
     setError(null);
     try {
-      const res = await uploadPcap(file, setProgress);
+      const res = await uploadPcap(file, policy, setProgress);
       await refreshCaptures();
       setActiveCaptureId(res.capture_id);
       navigate('/');
-    } catch (err) {
+    } catch (e) {
       await refreshCaptures();
-      setError(errorMessage(err, 'Analysis failed.'));
+      setError(errorMessage(e, 'The analysis failed.'));
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Analyze a Network Capture</h2>
-        <p className="text-sm text-slate-400 mt-1">PCAP / PCAPNG captures are analyzed passively; nothing is sent to any mail server.</p>
-      </div>
-
-      <div
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-        role="button"
-        tabIndex={0}
-        aria-label="Choose a PCAP capture file"
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.current?.click(); } }}
-        onClick={() => input.current?.click()}
-        className="border-2 border-dashed border-slate-700 bg-slate-900/40 hover:bg-slate-900/70 hover:border-amber-500/50 rounded-xl p-12 text-center transition-all cursor-pointer flex flex-col items-center justify-center min-h-[300px]"
-      >
-        <input ref={input} id="pcap-input" type="file" accept=".pcap,.pcapng,.cap" className="hidden"
-          onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ''; }} />
-        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 text-amber-400"><UploadCloud size={32} /></div>
-        <h3 className="text-lg font-semibold text-slate-200">Drop a capture here or click to browse</h3>
-        <p className="text-sm text-slate-500 mt-1">PCAP and PCAPNG, up to {MAX_MB} MB</p>
-        {file && (
-          <div className="mt-6 flex items-center gap-3 bg-slate-800/80 px-4 py-2.5 rounded-lg border border-slate-700 text-left">
-            <FileIcon className="text-amber-400 shrink-0" size={20} />
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-slate-200 break-all">{file.name}</div>
-              <div className="text-xs text-slate-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</div>
-            </div>
-            <CheckCircle2 className="text-emerald-400 ml-4 shrink-0" size={18} />
+    <>
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: 'Analyse a capture' }]} />
+      <PageTitle title="Analyse a capture" lead="The capture is analysed passively on this machine. No mail server is contacted and no traffic is decrypted." />
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] gap-5">
+        <Panel title="1. Capture file">
+          <div role="button" tabIndex={0} aria-label="Choose a capture file"
+            onClick={() => input.current?.click()}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.current?.click(); } }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e: React.DragEvent<HTMLDivElement>) => { e.preventDefault(); choose(e.dataTransfer.files?.[0]); }}
+            className="border-2 border-dashed border-line-strong rounded bg-sunken hover:bg-signal-soft cursor-pointer px-6 py-12 flex flex-col items-center gap-2 text-center">
+            <input ref={input} type="file" accept=".pcap,.pcapng,.cap" className="hidden" onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ''; }} />
+            <FileUp size={28} className="text-signal" aria-hidden="true" />
+            <span className="font-medium">Drop a capture here or choose a file</span>
+            <span className="text-sm text-ink-3">PCAP or PCAPNG, up to {MAX_MB} MB</span>
+            {file && <span className="mt-2 text-sm"><span className="font-mono break-all">{file.name}</span> ({(file.size / 1048576).toFixed(2)} MB)</span>}
           </div>
-        )}
+        </Panel>
+        <Panel title="2. Policy profile">
+          <fieldset className="space-y-2">
+            <legend className="sr-only">Policy profile</legend>
+            {(policies.data ?? []).map((p) => (
+              <label key={p.id} className="flex items-start gap-2 text-sm">
+                <input type="radio" name="policy" value={p.id} checked={policy === p.id} onChange={() => setPolicy(p.id)} className="mt-1" />
+                <span><strong>{p.name}</strong><span className="block text-ink-2">{p.description}</span></span>
+              </label>
+            ))}
+            {policies.error && <p className="text-sm text-sev-high">{policies.error}</p>}
+          </fieldset>
+          {selected && <p className="text-xs text-ink-3 mt-3">Minimum keys: RSA {selected.min_rsa_bits}, EC {selected.min_ec_bits}, DH {selected.min_dh_bits} bits. The profile is recorded in every report.</p>}
+        </Panel>
       </div>
-
-      {error && (
-        <div role="alert" className="bg-red-950/50 border border-red-800/80 text-red-200 px-4 py-3 rounded-lg flex items-center gap-3 text-sm">
-          <AlertTriangle size={18} className="text-red-400 shrink-0" /><span>{error}</span>
-        </div>
-      )}
-
-      <div className="flex justify-end items-center gap-4">
-        {uploading && <span className="text-xs text-slate-400">{progress < 100 ? `Uploading ${progress}%` : 'Analyzing capture…'}</span>}
-        {file && !uploading && (
-          <button type="button" onClick={() => setFile(null)} className="px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200">Clear</button>
-        )}
-        <button type="button" onClick={() => void upload()} disabled={!file || uploading}
-          className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:hover:bg-amber-500 text-slate-950 font-bold px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2 text-sm">
-          {uploading ? <><Loader2 className="animate-spin" size={18} /><span>Analyzing…</span></> : <span>Run analysis</span>}
-        </button>
+      {error && <p role="alert" className="text-sm text-sev-high">{error}</p>}
+      <div className="flex items-center justify-end gap-3">
+        {busy && <span className="text-sm text-ink-2" role="status">{progress < 100 ? `Uploading ${progress}%` : 'Analysing the capture'}</span>}
+        {file && !busy && <button type="button" className="btn" onClick={() => setFile(null)}>Clear</button>}
+        <button type="button" className="btn-primary" disabled={!file || busy} onClick={() => void run()}>Run analysis</button>
       </div>
-    </div>
+    </>
   );
 };

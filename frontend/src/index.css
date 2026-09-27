@@ -1,9 +1,103 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * SecureMailScope design tokens.
+ * Cool technical-document workspace, ink-navy application band, one steel-blue signal colour.
+ * Severity is an ordinal single-hue (red) ramp validated for colour-vision deficiency;
+ * severity is never conveyed by colour alone (every mark carries its label).
+ */
+:root {
+  --ground: 238 241 245;      /* #EEF1F5 workspace */
+  --panel: 255 255 255;
+  --sunken: 246 248 250;
+  --line: 218 224 232;
+  --line-strong: 184 193 206;
+  --ink: 22 32 46;            /* #16202E */
+  --ink-2: 70 84 104;
+  --ink-3: 104 118 138;
+  --chrome: 19 35 63;         /* #13233F application band */
+  --chrome-2: 12 24 45;
+  --chrome-ink: 232 237 245;
+  --chrome-muted: 160 176 201;
+  --signal: 31 90 166;        /* #1F5AA6 */
+  --signal-soft: 227 236 248;
+  --sev-critical: 122 23 23;  /* #7A1717 */
+  --sev-high: 180 35 24;      /* #B42318 */
+  --sev-medium: 224 97 63;    /* #E0613F */
+  --sev-low: 240 154 122;     /* #F09A7A */
+  --sev-info: 154 163 176;    /* #9AA3B0 */
+  --ok: 18 110 72;
+  --warn: 138 90 0;
+  --ml: 94 60 153;            /* ML outliers: distinct from severity */
+  font-size: 16px;
+}
+
+/* High-contrast mode (GIGW accessibility control) */
+:root[data-contrast="high"] {
+  --ground: 255 255 255;
+  --panel: 255 255 255;
+  --sunken: 255 255 255;
+  --line: 60 60 60;
+  --line-strong: 0 0 0;
+  --ink: 0 0 0;
+  --ink-2: 0 0 0;
+  --ink-3: 40 40 40;
+  --chrome: 0 0 0;
+  --chrome-2: 0 0 0;
+  --chrome-muted: 230 230 230;
+  --signal: 0 60 160;
+  --signal-soft: 225 235 255;
+}
+:root[data-text="lg"] { font-size: 17.5px; }
+:root[data-text="xl"] { font-size: 19px; }
+
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
+    @apply bg-ground text-ink font-sans text-base antialiased;
   }
+  :focus-visible {
+    outline: 2px solid rgb(var(--signal));
+    outline-offset: 2px;
+  }
+  h1, h2, h3 { @apply text-ink font-semibold; }
+  code, .mono { @apply font-mono; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+@layer components {
+  /* Panels: a titled header bar carries the section's identity, body holds data. */
+  .panel { @apply bg-panel border border-line rounded; }
+  .panel-head { @apply flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line bg-sunken rounded-t; }
+  .panel-title { @apply text-sm font-semibold text-ink; }
+  .panel-body { @apply p-4; }
+
+  /* Tables: dense, left-aligned, numbers right-aligned via .num */
+  .tbl { @apply w-full text-sm border-collapse; }
+  .tbl th { @apply text-left font-medium text-ink-2 bg-sunken border-b border-line px-3 py-2 whitespace-nowrap; }
+  .tbl td { @apply px-3 py-2 border-b border-line align-top; }
+  .tbl tr:last-child td { @apply border-b-0; }
+  .tbl .num { @apply text-right tabular-nums; }
+  .tbl tbody tr.row-link { @apply cursor-pointer; }
+  .tbl tbody tr.row-link:hover td { @apply bg-signal-soft; }
+  .tbl tbody tr[aria-selected="true"] td { @apply bg-signal-soft; }
+
+  .btn { @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded border border-line-strong bg-panel text-ink hover:bg-sunken disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-signal border-signal text-white hover:bg-signal/90; }
+  .field { @apply bg-panel border border-line-strong rounded px-2.5 py-1.5 text-sm text-ink; }
+  .label { @apply text-xs text-ink-3; }
+  .kv { @apply grid gap-x-4 gap-y-1.5 text-sm; grid-template-columns: minmax(9rem, max-content) 1fr; }
+  .kv dt { @apply text-ink-3; }
+  .kv dd { @apply text-ink break-words; }
+  .link { @apply text-signal underline decoration-signal/30 underline-offset-2 hover:decoration-signal; }
+  .notice { @apply border-l-4 border-signal bg-signal-soft px-3 py-2 text-sm text-ink; }
 }

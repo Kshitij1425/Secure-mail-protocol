@@ -1,97 +1,110 @@
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Receipt } from 'lucide-react';
 import { useCapture } from '../context/CaptureContext';
-import { getCaptureCertificates, getCertificate } from '../lib/api';
+import { getCertificateInventory } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import { DetailPanel, Field, StateBlock } from '../components/StateBlock';
-import type { CertificateSummary } from '../types/api';
+import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { fmtUtc, shortSession } from '../lib/format';
+import type { CertificateInventoryItem } from '../types/api';
 
-const validity = (c: CertificateSummary) =>
-  c.is_expired ? ['Expired at capture', 'bg-red-950 text-red-300 border-red-800']
-    : c.is_not_yet_valid ? ['Not yet valid', 'bg-red-950 text-red-300 border-red-800']
-    : ['In validity period', 'bg-emerald-950 text-emerald-300 border-emerald-800'];
+const validity = (c: CertificateInventoryItem) =>
+  c.is_expired ? 'Expired at capture time' : c.is_not_yet_valid ? 'Not yet valid at capture time'
+    : c.days_to_expiry_at_capture !== null ? `Valid; ${c.days_to_expiry_at_capture} days remaining at capture time` : 'Valid at capture time';
+
+const LINKAGE: Record<string, string> = {
+  verified: 'Signed by the next certificate in the presented chain (signature verified)',
+  none: 'Last certificate presented; no issuer in the chain to verify against',
+  name_mismatch: 'Issuer name does not match the next certificate',
+  signature_invalid: 'Signature does not verify with the next certificate',
+  unsupported: 'Signature algorithm could not be verified',
+};
 
 export const CertificatesPage = () => {
-  const { activeCaptureId } = useCapture();
+  const { activeCaptureId, activeCapture } = useCapture();
   const { selectedId, open, close } = useDetailPanel();
-  const list = useAsync(() => getCaptureCertificates(activeCaptureId!), activeCaptureId);
-  const detail = useAsync(() => getCertificate(selectedId!), selectedId);
-  if (!activeCaptureId) return <StateBlock empty emptyText="Select a capture to view certificates." />;
-  const d = detail.data;
+  const [filter, setFilter] = useState('all');
+  const inv = useAsync(() => getCertificateInventory(activeCaptureId!), activeCaptureId);
 
+  const rows = useMemo(() => (inv.data ?? []).filter((c) =>
+    filter === 'all' || (filter === 'issues' && (c.is_expired || c.is_not_yet_valid || c.weak_key || c.weak_signature || c.is_self_signed))
+    || (filter === 'leaf' && c.chain_positions.includes(0))), [inv.data, filter]);
+  const sel = (inv.data ?? []).find((c) => c.fingerprint_sha256 === selectedId || c.certificate_ids.includes(selectedId ?? ''));
+
+  if (!activeCaptureId) return <NeedCapture />;
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Certificate Inventory</h2>
-        <p className="text-sm text-slate-400 mt-1">
-          X.509 certificates visible in cleartext TLS Certificate messages (TLS ≤ 1.2). TLS 1.3 encrypts certificates, so they cannot be observed passively.
-          Trust is not evaluated: no trust-anchor store is consulted.
-        </p>
-      </div>
+    <>
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' },
+        { label: 'Certificates', to: '/certificates' }, ...(sel ? [{ label: sel.common_name ?? 'Certificate' }] : [])]} />
+      <PageTitle title="Certificate intelligence"
+        lead="Distinct certificates extracted from cleartext TLS Certificate messages (TLS 1.2 and earlier). Extraction, chain linkage and trust are separate questions: linkage is verified by signature; trust against a trust anchor is not evaluated. TLS 1.3 certificates are encrypted and cannot be observed." />
+      <label className="flex items-center gap-2 text-sm"><span className="label">Show</span>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="field">
+          <option value="all">All certificates</option><option value="leaf">Server (leaf) certificates</option><option value="issues">Certificates with issues</option>
+        </select></label>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className={`space-y-3 ${selectedId ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
-          <StateBlock loading={list.loading} error={list.error} onRetry={list.reload}
-            empty={!!list.data && list.data.length === 0} emptyText="No certificates observed in this capture.">
-            {list.data?.map((c) => {
-              const [label, cls] = validity(c);
-              return (
-                <button key={c.certificate_id} type="button" onClick={() => open(c.certificate_id)} aria-pressed={selectedId === c.certificate_id}
-                  aria-label={`Open details for certificate ${c.subject ?? c.fingerprint_sha256}`}
-                  className={`w-full text-left p-4 rounded-lg border transition-all flex items-center justify-between gap-4 ${selectedId === c.certificate_id
-                    ? 'bg-slate-800/80 border-amber-500/50' : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'}`}>
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Receipt size={16} className="text-amber-400 shrink-0" />
-                      <span className="text-sm font-semibold text-slate-200 break-all">{c.common_name ?? c.subject}</span>
-                      <span className="text-[10px] text-slate-400">{c.chain_position === 0 ? 'leaf' : `chain #${c.chain_position}`}</span>
-                    </div>
-                    <div className="text-xs text-slate-400 font-mono break-all">Issuer: {c.issuer}</div>
-                    <div className="text-[11px] text-slate-500 font-mono">{c.public_key_algorithm} {c.public_key_size_bits ? `${c.public_key_size_bits}-bit` : ''}{c.is_self_signed ? ' · self-signed' : ''}</div>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className={`border text-[10px] px-2 py-0.5 rounded font-bold uppercase ${cls}`}>{label}</span>
-                    <ArrowRight size={16} className="text-slate-500" aria-hidden="true" />
-                  </div>
-                </button>
-              );
-            })}
+      <div className={`grid gap-5 ${sel ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)]' : 'grid-cols-1'}`}>
+        <Panel title={`${rows.length} certificate(s)`} bodyClass="overflow-x-auto">
+          <StateBlock loading={inv.loading} error={inv.error} onRetry={inv.reload} empty={!inv.loading && rows.length === 0}
+            emptyText={inv.data?.length ? 'No certificates match this filter.' : 'No certificates were observable in this capture.'}>
+            <table className="tbl">
+              <thead><tr><th>Subject</th><th>Role</th><th>Key</th><th>Validity at capture</th><th className="num">Sessions</th><th>Linkage</th></tr></thead>
+              <tbody>
+                {rows.map((c) => (
+                  <tr key={c.fingerprint_sha256} className="row-link" aria-selected={sel?.fingerprint_sha256 === c.fingerprint_sha256} onClick={() => open(c.fingerprint_sha256)}>
+                    <td><button type="button" className="link text-left break-all" onClick={(e) => { e.stopPropagation(); open(c.fingerprint_sha256); }}>{c.common_name ?? c.subject}</button>
+                      <div className="text-xs text-ink-3 break-all">issued by {c.issuer}</div></td>
+                    <td className="text-ink-2">{c.chain_positions.includes(0) ? 'server' : c.is_ca ? 'CA' : 'chain'}{c.is_self_signed ? ', self-signed' : ''}</td>
+                    <td className={c.weak_key ? 'font-medium text-sev-high' : ''}>{c.public_key_algorithm} {c.public_key_size_bits}{c.weak_key ? ' (weak)' : ''}</td>
+                    <td className={c.is_expired || c.is_not_yet_valid ? 'font-medium text-sev-high' : ''}>{c.is_expired ? 'expired' : c.is_not_yet_valid ? 'not yet valid' : `${c.days_to_expiry_at_capture ?? '?'} days left`}</td>
+                    <td className="num">{c.session_count}</td>
+                    <td className="text-ink-2">{c.chain_linkage.join(', ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </StateBlock>
-        </div>
+        </Panel>
 
-        {selectedId && (
-          <DetailPanel title="X.509 certificate" subtitle={d ? `SHA-256 ${d.fingerprint_sha256}` : selectedId} onClose={close}>
-            <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload}>
-              {d && (
-                <div>
-                  <Field label="Subject">{d.subject}</Field>
-                  <Field label="Issuer">{d.issuer}</Field>
-                  <Field label="Serial">{d.serial_number}</Field>
-                  <Field label="Valid from">{d.not_before}</Field>
-                  <Field label="Valid until">{d.not_after}</Field>
-                  <Field label="Validity evaluated at">{d.validity_reference === 'capture_time' ? 'capture time' : d.validity_reference}</Field>
-                  <Field label="Status">{validity(d)[0]}</Field>
-                  <Field label="Public key">{d.public_key_algorithm} {d.public_key_size_bits}-bit{d.weak_key ? ' (weak)' : ''}</Field>
-                  <Field label="Signature">{d.signature_algorithm}{d.weak_signature ? ' (weak hash)' : ''}</Field>
-                  <Field label="CA certificate">{d.is_ca === null ? 'not stated' : d.is_ca ? 'yes' : 'no'}</Field>
-                  <Field label="Self-signed">{d.is_self_signed ? 'yes (signature verified with own key)' : 'no'}</Field>
-                  <Field label="Signed by next in chain">{d.issued_by_next ?? 'n/a'}</Field>
-                  <Field label="Trust">{d.trust_status} — not evaluated (no trust anchors)</Field>
-                  <Field label="SAN">{d.san_list.length ? d.san_list.join(', ') : 'none'}</Field>
-                  <Field label="Seen in sessions">
-                    <span className="flex flex-col items-end gap-1">
-                      {d.seen_in_sessions.map((s) => (
-                        <Link key={s} to={`/sessions?id=${encodeURIComponent(s)}`} className="text-amber-300 hover:underline">{s.split('~').pop()}</Link>
-                      ))}
-                    </span>
-                  </Field>
-                </div>
-              )}
-            </StateBlock>
-          </DetailPanel>
+        {sel && (
+          <Drawer title={sel.common_name ?? 'Certificate'} subtitle={`SHA-256 ${sel.fingerprint_sha256}`} onClose={close}>
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Status</h3>
+              <KV rows={[
+                { k: 'Extraction', v: <><EvidenceTag value="OBSERVED" /> {sel.extraction}</> },
+                { k: 'Chain linkage', v: <>{sel.chain_linkage.map((l) => <div key={l}>{LINKAGE[l] ?? l}</div>)}</> },
+                { k: 'Trust validation', v: <><EvidenceTag value="NOT_EVALUATED" /> {sel.trust_validation}</> },
+                { k: 'Validity', v: validity(sel) },
+              ]} />
+            </section>
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Certificate</h3>
+              <KV rows={[
+                { k: 'Subject', v: sel.subject },
+                { k: 'Issuer', v: sel.issuer },
+                { k: 'Serial', v: <Mono>{sel.serial_number}</Mono> },
+                { k: 'Valid from', v: fmtUtc(sel.not_before) },
+                { k: 'Valid until', v: fmtUtc(sel.not_after) },
+                { k: 'Public key', v: `${sel.public_key_algorithm} ${sel.public_key_size_bits} bits${sel.weak_key ? ' (below policy minimum)' : ''}` },
+                { k: 'Signature', v: `${sel.signature_algorithm}${sel.weak_signature ? ' (weak hash)' : ''}` },
+                { k: 'CA certificate', v: sel.is_ca === null ? 'not stated' : sel.is_ca ? 'yes' : 'no' },
+                { k: 'Self-signed', v: sel.is_self_signed ? 'yes (verifies with its own key)' : 'no' },
+                { k: 'SAN', v: sel.san_list.length ? sel.san_list.join(', ') : 'none' },
+                { k: 'SHA-256', v: <Mono>{sel.fingerprint_sha256}</Mono> },
+              ]} />
+            </section>
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Where it was seen</h3>
+              <KV rows={[
+                { k: 'Servers', v: sel.servers.join(', ') || 'none' },
+                { k: 'SNI requested', v: sel.sni_requested.join(', ') || 'none sent' },
+                { k: 'Chain positions', v: sel.chain_positions.join(', ') },
+              ]} />
+              <ul className="space-y-1">{sel.session_ids.map((s) => <li key={s}><Link className="link font-mono text-xs break-all" to={`/sessions?id=${encodeURIComponent(s)}`}>{shortSession(s)}</Link></li>)}</ul>
+            </section>
+          </Drawer>
         )}
       </div>
-    </div>
+    </>
   );
 };

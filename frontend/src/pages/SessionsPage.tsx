@@ -1,133 +1,131 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Search } from 'lucide-react';
 import { useCapture } from '../context/CaptureContext';
-import { getCaptureSessions, getSession } from '../lib/api';
+import { getCaptureSessions, getSession, getTimeline } from '../lib/api';
 import { useAsync } from '../hooks/useAsync';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import { DetailPanel, Field, StateBlock } from '../components/StateBlock';
+import { Breadcrumbs, Drawer, EvidenceTag, KV, Mono, NeedCapture, PageTitle, Panel, StateBlock } from '../components/ui';
+import { fmtUtc, shortSession } from '../lib/format';
 
-const yesNo = (v: boolean | null | undefined) => (v === null || v === undefined ? 'unknown' : v ? 'yes' : 'no');
-const short = (id: string) => id.split('~').pop() ?? id;
+const yn = (v: boolean | null | undefined) => (v === null || v === undefined ? 'unknown' : v ? 'yes' : 'no');
 
 export const SessionsPage = () => {
-  const { activeCaptureId } = useCapture();
+  const { activeCaptureId, activeCapture } = useCapture();
   const { selectedId, open, close } = useDetailPanel();
-  const [protocol, setProtocol] = useState('all');
-  const [search, setSearch] = useState('');
+  const [proto, setProto] = useState('all');
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState<'time' | 'findings' | 'tls'>('time');
   const list = useAsync(() => getCaptureSessions(activeCaptureId!), activeCaptureId);
   const detail = useAsync(() => getSession(selectedId!), selectedId);
+  const tl = useAsync(() => getTimeline(activeCaptureId!, selectedId!), activeCaptureId && selectedId ? `${activeCaptureId}|${selectedId}` : null);
 
-  const rows = useMemo(() => (list.data ?? []).filter((s) =>
-    (protocol === 'all' || s.protocol === protocol) &&
-    (!search || `${s.source_ip}:${s.source_port} ${s.dest_ip}:${s.dest_port} ${s.cipher_suite ?? ''} ${s.tls_version ?? ''}`
-      .toLowerCase().includes(search.toLowerCase()))), [list.data, protocol, search]);
+  const rows = useMemo(() => {
+    const r = (list.data ?? []).filter((s) => (proto === 'all' || s.protocol === proto) &&
+      (!q || `${s.source_ip}:${s.source_port} ${s.dest_ip}:${s.dest_port} ${s.cipher_suite ?? ''} ${s.tls_version ?? ''}`.toLowerCase().includes(q.toLowerCase())));
+    const by = {
+      time: (a: typeof r[0], b: typeof r[0]) => (a.start_timestamp ?? '').localeCompare(b.start_timestamp ?? ''),
+      findings: (a: typeof r[0], b: typeof r[0]) => Number(b.has_findings) - Number(a.has_findings),
+      tls: (a: typeof r[0], b: typeof r[0]) => (a.tls_version ?? 'zz').localeCompare(b.tls_version ?? 'zz'),
+    }[sort];
+    return [...r].sort(by);
+  }, [list.data, proto, q, sort]);
 
-  if (!activeCaptureId) return <StateBlock empty emptyText="Select a capture to view sessions." />;
+  if (!activeCaptureId) return <NeedCapture />;
   const d = detail.data;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-100 tracking-tight">Session Explorer</h2>
-        <p className="text-sm text-slate-400 mt-1">Reassembled SMTP / IMAP / POP3 connections and what was observable of their TLS negotiation.</p>
+    <>
+      <Breadcrumbs items={[{ label: 'Captures', to: '/captures' }, { label: activeCapture?.filename ?? 'Analysis', to: '/' },
+        { label: 'Sessions', to: '/sessions' }, ...(selectedId ? [{ label: shortSession(selectedId) }] : [])]} />
+      <PageTitle title="Email sessions" lead="Reassembled SMTP, IMAP and POP3 connections with what was observable of each TLS negotiation." />
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1 min-w-[16rem] flex-1"><span className="label">Search</span>
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Address, port, cipher or version" className="field" /></label>
+        <label className="flex flex-col gap-1"><span className="label">Protocol</span>
+          <select value={proto} onChange={(e) => setProto(e.target.value)} className="field">
+            <option value="all">All</option><option>SMTP</option><option>IMAP</option><option>POP3</option></select></label>
+        <label className="flex flex-col gap-1"><span className="label">Sort by</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="field">
+            <option value="time">Start time</option><option value="findings">Findings first</option><option value="tls">TLS version</option></select></label>
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 bg-slate-900/40 p-4 rounded-lg border border-slate-800">
-        <label className="flex items-center gap-3 flex-1 min-w-[240px]">
-          <Search size={16} className="text-slate-500" />
-          <input type="search" aria-label="Search sessions" placeholder="Search IP, port, cipher, version..." value={search}
-            onChange={(e) => setSearch(e.target.value)} className="bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none w-full" />
-        </label>
-        <select aria-label="Filter by protocol" value={protocol} onChange={(e) => setProtocol(e.target.value)}
-          className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded px-3 py-1.5">
-          <option value="all">All protocols</option><option value="SMTP">SMTP</option><option value="IMAP">IMAP</option><option value="POP3">POP3</option>
-        </select>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className={`space-y-3 ${selectedId ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+      <div className={`grid gap-5 ${selectedId ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,34rem)]' : 'grid-cols-1'}`}>
+        <Panel title={`${rows.length} session(s)`} bodyClass="overflow-x-auto">
           <StateBlock loading={list.loading} error={list.error} onRetry={list.reload} empty={!list.loading && rows.length === 0}
-            emptyText={list.data?.length ? 'No sessions match the filters.' : 'No email sessions detected in this capture.'}>
-            {rows.map((s) => (
-              <button key={s.session_id} type="button" onClick={() => open(s.session_id)} aria-pressed={selectedId === s.session_id}
-                aria-label={`Open details for session ${s.source_ip}:${s.source_port} to ${s.dest_ip}:${s.dest_port}`}
-                className={`w-full text-left p-4 rounded-lg border transition-all flex items-center justify-between gap-4 ${selectedId === s.session_id
-                  ? 'bg-slate-800/80 border-amber-500/50' : 'bg-slate-900/40 border-slate-800/80 hover:bg-slate-900/80 hover:border-slate-700'}`}>
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="bg-slate-800 px-2 py-0.5 rounded text-[11px] font-mono font-bold text-amber-400">{s.protocol}</span>
-                    {s.implicit_tls && <span className="text-[10px] text-sky-300 border border-sky-800 rounded px-1">implicit TLS</span>}
-                    <span className="text-xs text-slate-400 font-mono break-all">{s.source_ip}:{s.source_port} → {s.dest_ip}:{s.dest_port}</span>
-                  </div>
-                  <div className="text-xs text-slate-300 font-mono break-all">
-                    {s.tls_version ? `${s.tls_version} · ${s.cipher_suite ?? 'cipher not observed'}` : s.starttls_state === 'PLAINTEXT' ? 'Plaintext (no TLS observed)' : `${s.starttls_state} · TLS version not observed`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {s.has_findings && <span className="bg-amber-950 text-amber-300 border border-amber-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">Findings</span>}
-                  {s.has_anomaly && <span className="bg-fuchsia-950 text-fuchsia-300 border border-fuchsia-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">ML outlier</span>}
-                  {s.has_forward_secrecy === true && <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] px-2 py-0.5 rounded font-bold uppercase">PFS</span>}
-                  {s.has_forward_secrecy === false && <span className="bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase">No PFS</span>}
-                  <ArrowRight size={16} className="text-slate-500" aria-hidden="true" />
-                </div>
-              </button>
-            ))}
+            emptyText={list.data?.length ? 'No sessions match these filters.' : 'No email sessions were found in this capture.'}>
+            <table className="tbl">
+              <thead><tr><th>Client to server</th><th>Protocol</th><th>Transition</th><th>TLS</th><th>Cipher suite</th><th>Findings</th><th>ML</th></tr></thead>
+              <tbody>
+                {rows.map((s) => (
+                  <tr key={s.session_id} className="row-link" aria-selected={selectedId === s.session_id} onClick={() => open(s.session_id)}>
+                    <td><button type="button" className="link font-mono text-xs text-left" onClick={(e) => { e.stopPropagation(); open(s.session_id); }}>{s.source_ip}:{s.source_port} to {s.dest_ip}:{s.dest_port}</button></td>
+                    <td>{s.protocol}</td>
+                    <td className="text-ink-2">{s.implicit_tls ? 'implicit TLS' : s.starttls_state?.toLowerCase().replace(/_/g, ' ')}</td>
+                    <td>{s.tls_version ?? <span className="text-ink-3">not observed</span>}</td>
+                    <td className="font-mono text-xs">{s.cipher_suite ?? '-'}</td>
+                    <td>{s.has_findings ? 'yes' : 'none'}</td>
+                    <td>{s.has_anomaly ? <span className="text-ml font-medium">outlier</span> : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </StateBlock>
-        </div>
+        </Panel>
 
         {selectedId && (
-          <DetailPanel title="Session details" subtitle={short(selectedId)} onClose={close}>
+          <Drawer title="Session" subtitle={shortSession(selectedId)} onClose={close}>
             <StateBlock loading={detail.loading} error={detail.error} onRetry={detail.reload}>
-              {d && (
-                <div className="space-y-4">
-                  <div>
-                    <Field label="Protocol">{d.protocol}{d.implicit_tls ? ' (implicit TLS)' : ''} · {d.detection_method}</Field>
-                    <Field label="Client">{d.source_ip}:{d.source_port}</Field>
-                    <Field label="Server">{d.dest_ip}:{d.dest_port}</Field>
-                    <Field label="Frames">{d.first_frame} – {d.last_frame} ({d.packet_count} packets, {d.byte_count} B payload)</Field>
-                    <Field label="TCP reassembly">{d.reconstruction_quality}</Field>
-                    <Field label="STARTTLS">{d.implicit_tls ? 'n/a (implicit TLS)' : d.starttls_state}</Field>
-                    <Field label="STARTTLS advertised">{yesNo(d.starttls_advertised)}</Field>
-                    <Field label="Negotiated TLS">{d.tls_version ?? 'not observed'}</Field>
-                    <Field label="Client offered">{d.detail.tls?.client_max_version ?? 'not observed'}</Field>
-                    <Field label="Cipher suite">{d.cipher_suite ?? 'not observed'}</Field>
-                    <Field label="Key exchange">{d.key_exchange ?? 'not observed'}{d.key_exchange_group ? ` (${d.key_exchange_group})` : ''}</Field>
-                    <Field label="Forward secrecy">{yesNo(d.has_forward_secrecy)}</Field>
-                    <Field label="SNI">{d.sni ?? 'not sent'}</Field>
-                    <Field label="Handshake">{d.handshake_status ?? 'not observed'}</Field>
-                    <Field label="Certificates">{d.certificate_visibility === 'encrypted_tls13' ? 'encrypted (TLS 1.3) — not observable' : `${d.certificates.length} observed`}</Field>
-                    {!!d.detail.starttls?.plaintext_auth_mechanisms?.length && (
-                      <Field label="Plaintext auth">{d.detail.starttls.plaintext_auth_mechanisms.join(', ')} (values not stored)</Field>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs uppercase font-bold text-slate-400 block mb-1">Findings ({d.findings.length})</span>
-                    {d.findings.length ? (
-                      <ul className="space-y-1">{d.findings.map((f) => (
-                        <li key={f}><Link className="text-xs font-mono text-amber-300 hover:underline break-all" to={`/findings?id=${encodeURIComponent(f)}`}>{f.startsWith(`${d.session_id}:`) ? f.slice(d.session_id.length + 1) : f}</Link></li>
-                      ))}</ul>
-                    ) : <p className="text-xs text-slate-500">None.</p>}
-                  </div>
-                  {d.certificates.length > 0 && (
-                    <div>
-                      <span className="text-xs uppercase font-bold text-slate-400 block mb-1">Certificate chain</span>
-                      <ul className="space-y-1">{d.certificates.map((c) => (
-                        <li key={c}><Link className="text-xs font-mono text-amber-300 hover:underline" to={`/certificates?id=${encodeURIComponent(c)}`}>position {c.split('~c').pop()}</Link></li>
-                      ))}</ul>
-                    </div>
-                  )}
-                  {d.anomaly_id !== null && (
-                    <Link to={`/anomalies?id=${d.anomaly_id}`} className="text-xs text-fuchsia-300 hover:underline">
-                      ML assessment: {d.has_anomaly ? `outlier (${d.anomaly_level})` : 'normal'} →
-                    </Link>
-                  )}
-                </div>
-              )}
+              {d && <>
+                <KV rows={[
+                  { k: 'Protocol', v: <>{d.protocol}{d.implicit_tls ? ' over implicit TLS' : ''} <span className="text-ink-3">({d.detection_method})</span></> },
+                  { k: 'Client', v: <Mono>{d.source_ip}:{d.source_port}</Mono> },
+                  { k: 'Server', v: <Mono>{d.dest_ip}:{d.dest_port}</Mono> },
+                  { k: 'Observed', v: <>{fmtUtc(d.start_timestamp, true)} to {fmtUtc(d.end_timestamp, true)}</> },
+                  { k: 'Frames', v: <>{d.first_frame}-{d.last_frame} ({d.packet_count} packets, {d.byte_count} payload bytes)</> },
+                  { k: 'TCP reassembly', v: d.reconstruction_quality },
+                  { k: 'STARTTLS', v: d.implicit_tls ? 'not applicable (implicit TLS)' : `${d.starttls_state}; advertised by server: ${yn(d.starttls_advertised)}` },
+                  { k: 'Negotiated TLS', v: d.tls_version ?? <EvidenceTag value="NOT_OBSERVED" /> },
+                  { k: 'Client offered', v: d.detail.tls?.client_max_version ?? 'not observed' },
+                  { k: 'Cipher suite', v: d.cipher_suite ? <Mono>{d.cipher_suite}</Mono> : 'not observed' },
+                  { k: 'Key exchange', v: `${d.key_exchange ?? 'not observed'}${d.key_exchange_group ? ` (${d.key_exchange_group})` : ''}` },
+                  { k: 'Forward secrecy', v: yn(d.has_forward_secrecy) },
+                  { k: 'SNI', v: d.sni ?? 'not sent' },
+                  { k: 'Handshake', v: d.handshake_status ?? 'not observed' },
+                  { k: 'Certificates', v: d.certificate_visibility === 'encrypted_tls13' ? <EvidenceTag value="NOT_OBSERVABLE" /> : `${d.certificates.length} observed` },
+                  ...(d.detail.starttls?.plaintext_auth_mechanisms?.length ? [{ k: 'Plaintext authentication', v: `${d.detail.starttls.plaintext_auth_mechanisms.join(', ')} (values not stored)` }] : []),
+                ]} />
+                <section className="space-y-1.5">
+                  <h3 className="text-sm font-semibold">Findings ({d.findings.length})</h3>
+                  {d.findings.length ? <ul className="space-y-1">{d.findings.map((f) => <li key={f}><Link to={`/findings?id=${encodeURIComponent(f)}`} className="link font-mono text-xs break-all">{f.startsWith(`${d.session_id}:`) ? f.slice(d.session_id.length + 1) : f}</Link></li>)}</ul>
+                    : <p className="text-sm text-ink-2">None.</p>}
+                </section>
+                {d.certificates.length > 0 && (
+                  <section className="space-y-1.5">
+                    <h3 className="text-sm font-semibold">Certificate chain as presented</h3>
+                    <ol className="space-y-1">{d.certificates.map((c) => <li key={c}><Link to={`/certificates?id=${encodeURIComponent(c)}`} className="link text-sm">Position {c.split('~c').pop()}</Link></li>)}</ol>
+                  </section>
+                )}
+                {d.anomaly_id !== null && (
+                  <p className="text-sm"><Link to={`/anomalies?id=${d.anomaly_id}`} className="link">ML assessment: {d.has_anomaly ? `outlier (${d.anomaly_level}), requires investigation` : 'consistent with the capture population'}</Link></p>
+                )}
+                <section className="space-y-1.5">
+                  <h3 className="text-sm font-semibold">Session timeline</h3>
+                  <StateBlock loading={tl.loading} error={tl.error}>
+                    <ol className="space-y-1 text-sm">
+                      {(tl.data ?? []).map((e, i) => (
+                        <li key={i} className="grid grid-cols-[auto_1fr] gap-x-3">
+                          <span className="text-xs text-ink-3 tabular-nums">{e.ts ? fmtUtc(e.ts, true).slice(11) : 'analysis'}{e.frame ? ` #${e.frame}` : ''}</span>
+                          <span>{e.label} <EvidenceTag value={e.evidence_class} /></span>
+                        </li>
+                      ))}
+                    </ol>
+                  </StateBlock>
+                </section>
+              </>}
             </StateBlock>
-          </DetailPanel>
+          </Drawer>
         )}
       </div>
-    </div>
+    </>
   );
 };

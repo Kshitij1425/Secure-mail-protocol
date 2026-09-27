@@ -346,7 +346,7 @@ def get_evidence_bundle(capture_id: str, redact: bool = False, db: Session = Dep
     from securemailscope.reports.bundle import build_bundle
     c = _capture_or_404(db, capture_id)
     data = build_bundle(_raw_doc(c), redact=redact)
-    name = f"{safe_report_basename(c.filename)}_evidence_{'redacted' if redact else 'raw'}.zip"
+    name = f"{_download_stem(c, redact)}_evidence_{'redacted' if redact else 'raw'}.zip"
     return Response(data, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
@@ -357,9 +357,18 @@ def get_stix(capture_id: str, redact: bool = False, db: Session = Depends(get_db
     from securemailscope.reports.stix import build_stix_bundle
     c = _capture_or_404(db, capture_id)
     data = json.dumps(build_stix_bundle(_doc(db, capture_id, redact)), indent=2).encode()
-    name = f"{safe_report_basename(c.filename)}_stix_{'redacted' if redact else 'raw'}.json"
+    name = f"{_download_stem(c, redact)}_stix_{'redacted' if redact else 'raw'}.json"
     return Response(data, media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _download_stem(c, redact: bool) -> str:
+    """Download file-name stem. Redacted outputs must not reveal the original file name."""
+    if c is None:
+        return "capture"
+    if redact:
+        return f"capture_{(c.file_hash or 'unknown')[:12]}"
+    return safe_report_basename(c.filename)
 
 
 def _raw_doc(c):
@@ -547,7 +556,7 @@ def download_report(report_id: str, db: Session = Depends(get_db)):
     if path is None:
         raise HTTPException(status_code=404, detail="Report file not found")
     c = db.query(CaptureDB).filter(CaptureDB.capture_id == r.capture_id).first()
-    name = f"{safe_report_basename(c.filename if c else 'capture')}_report{'_redacted' if r.redacted else ''}.{r.report_type}"
+    name = f"{_download_stem(c, bool(r.redacted))}_report{'_redacted' if r.redacted else ''}.{r.report_type}"
     # Always download (attachment), never render in the API origin.
     media = {"json": "application/json", "html": "text/html", "pdf": "application/pdf"}.get(r.report_type,
                                                                                           "application/octet-stream")

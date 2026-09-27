@@ -12,6 +12,11 @@ so the export contains *observations* only:
 No indicator, malware, attack-pattern or "malicious" labels are produced: an unusual or
 weak configuration is not evidence of compromise. IDs are deterministic (UUIDv5), so the
 same stored analysis yields the same bundle.
+
+Redacted documents carry pseudonyms (for example ``ip-001``) instead of addresses. Those
+cannot be expressed as ipv4-addr / network-traffic without inventing addresses, so each
+session is then described by a custom ``x-securemailscope-redacted-session`` SCO holding
+the pseudonymous endpoints, ports, protocols and times.
 """
 import ipaddress
 import json
@@ -50,6 +55,13 @@ def build_stix_bundle(doc: Dict[str, Any]) -> Dict[str, Any]:
                 "description": "Passive email TLS posture analyzer (automated system)."}
     objs[identity["id"]] = identity
 
+    def is_ip(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
+
     def ip_obj(value: str) -> str:
         kind = "ipv6-addr" if ipaddress.ip_address(value).version == 6 else "ipv4-addr"
         oid = _sco_id(kind, {"value": value})
@@ -62,15 +74,24 @@ def build_stix_bundle(doc: Dict[str, Any]) -> Dict[str, Any]:
 
     observed_for_session: Dict[str, str] = {}
     for s in doc.get("sessions", []):
-        src, dst = ip_obj(s["client"]["ip"]), ip_obj(s["server"]["ip"])
-        protocols = ["ipv6" if ":" in s["client"]["ip"] else "ipv4", "tcp", s["protocol"].lower()]
-        if s.get("tls"):
-            protocols.append("tls")
-        nt = {"start": _ts(s["start_time"]), "end": _ts(s["end_time"]), "src_ref": src, "dst_ref": dst,
-              "src_port": s["client"]["port"], "dst_port": s["server"]["port"], "protocols": protocols}
-        nt_id = _sco_id("network-traffic", nt)
-        objs[nt_id] = {"type": "network-traffic", "spec_version": "2.1", "id": nt_id, **nt, "is_active": False}
-        refs = [nt_id, src, dst]
+        protocols = ["tcp", s["protocol"].lower()] + (["tls"] if s.get("tls") else [])
+        if is_ip(s["client"]["ip"]) and is_ip(s["server"]["ip"]):
+            src, dst = ip_obj(s["client"]["ip"]), ip_obj(s["server"]["ip"])
+            nt = {"start": _ts(s["start_time"]), "end": _ts(s["end_time"]), "src_ref": src, "dst_ref": dst,
+                  "src_port": s["client"]["port"], "dst_port": s["server"]["port"],
+                  "protocols": ["ipv6" if ":" in s["client"]["ip"] else "ipv4"] + protocols}
+            nt_id = _sco_id("network-traffic", nt)
+            objs[nt_id] = {"type": "network-traffic", "spec_version": "2.1", "id": nt_id, **nt, "is_active": False}
+            refs = [nt_id, src, dst]
+        else:
+            rs = {"client": s["client"]["ip"], "client_port": s["client"]["port"], "server": s["server"]["ip"],
+                  "server_port": s["server"]["port"], "protocols": protocols,
+                  "start": _ts(s["start_time"]), "end": _ts(s["end_time"])}
+            kind = "x-securemailscope-redacted-session"
+            rs_id = _sco_id(kind, rs)
+            objs[rs_id] = {"type": kind, "spec_version": "2.1", "id": rs_id, **rs,
+                           "x_note": "Endpoints are pseudonyms from a redacted analysis, not addresses."}
+            refs = [rs_id]
         for c in certs_by_session.get(s["session_id"], []):
             sco = {"hashes": {"SHA-256": c["fingerprint_sha256"]}, "serial_number": c["serial_number"]}
             cid = _sco_id("x509-certificate", sco)

@@ -218,3 +218,30 @@ def test_stix_export_is_valid_observation_only(client):
     assert not types & {"indicator", "malware", "attack-pattern", "threat-actor"}
     assert b"malicious" not in raw.lower()
     assert raw == client.get(f"/captures/{cid}/stix").content  # deterministic
+
+
+def test_redacted_stix_export_is_valid_and_leaks_no_addresses(client):
+    """Regression: redacted pseudonyms (ip-001) crashed the STIX export with a 500."""
+    stix2 = pytest.importorskip("stix2")
+    cid = up(client, "real_remediation_before.pcap")
+    r = client.get(f"/captures/{cid}/stix?redact=true")
+    assert r.status_code == 200, r.text
+    parsed = stix2.parse(r.content, allow_custom=True)
+    types = {o["type"] for o in parsed.objects}
+    assert "x-securemailscope-redacted-session" in types
+    assert not types & {"ipv4-addr", "ipv6-addr", "network-traffic", "indicator"}
+    assert b"10.77.0.50" not in r.content
+    assert r.content == client.get(f"/captures/{cid}/stix?redact=true").content
+
+
+def test_redacted_download_names_do_not_reveal_capture_filename(client):
+    cid = up(client, "real_remediation_before.pcap")
+    for url in (f"/captures/{cid}/bundle?redact=true", f"/captures/{cid}/stix?redact=true"):
+        cd = client.get(url).headers["content-disposition"]
+        assert "real_remediation_before" not in cd and "capture_" in cd, cd
+    rid = client.post(f"/captures/{cid}/reports", params={"format": "json", "redact": True})
+    assert rid.status_code < 400, rid.text
+    cd = client.get(f"/reports/{rid.json()['report_id']}/download").headers["content-disposition"]
+    assert "real_remediation_before" not in cd and "_redacted" in cd, cd
+    raw = client.get(f"/captures/{cid}/bundle").headers["content-disposition"]
+    assert "real_remediation_before" in raw
