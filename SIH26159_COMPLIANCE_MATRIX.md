@@ -1,4 +1,4 @@
-# SIH26159 Compliance Matrix (verified 2026-09-26)
+# SIH26159 Compliance Matrix (verified 2026-09-27)
 
 Status: **FULL** = implemented and verified end-to-end on captures; **PARTIAL** = implemented
 with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established from a capture.
@@ -6,7 +6,7 @@ with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established 
 
 | Req | Requirement | Status | Implementation | Evidence |
 |---|---|---|---|---|
-| A | Passive analysis of SMTP/IMAP/POP3 from PCAP | FULL | `ingestion`, whole pipeline; no network access | 28 fixture captures, `test_real_pcap_validation.py` |
+| A | Passive analysis of SMTP/IMAP/POP3 from PCAP | FULL | `ingestion`, whole pipeline; no network access | 28 fixture captures, `test_real_pcap_validation.py`, 9 real server/client lab captures (`test_real_mail_captures.py`; no IMAP server in the lab) |
 | B | Automatic protocol identification | FULL | `protocols/detector.py`: banner + commands + port; non-standard ports by banner; implicit TLS by port; non-email rejected | `smtp_nonstandard_port`, `unrelated_traffic`, `test_detector_*` |
 | C | STARTTLS negotiation / upgrade detection and validation | FULL | `starttls/machine.py` + TLS parser confirmation; requested/accepted/rejected (SMTP 4xx/5xx, IMAP tagged, POP3 -ERR), advertised, repeated, pipelined, plaintext after rejection; "requested" never equated with "established" | `smtp_starttls_downgrade`, `pop3_starttls_rejected`, `smtp_starttls_truncated`, `smtp_starttls_pipelined`, STARTTLS regression tests |
 | D | Complete TCP stream reconstruction | FULL (IPv4/IPv6; no IP-fragment reassembly) | `tcp/stream.py`: per-direction seq reassembly, OOO, retransmission, overlap conflicts, gaps, wraparound, port reuse, limits | `out_of_order`, `retransmissions`, `missing_segment`, `tcp_overlap_conflict`, property test `test_reassembly_recovers_exact_bytes` |
@@ -28,7 +28,7 @@ with a documented limit; **LIMITED BY PASSIVITY** = cannot be fully established 
 | T | JSON report | FULL | `reports/document.py` | `test_reports_all_formats`, CLI tests |
 | U | HTML report | FULL | Jinja2 template, escaped, CSP | same |
 | V | PDF report | FULL | ReportLab (dependency declared) | same; browser E2E download |
-| W | Interactive dashboard | FULL | React: Overview, Findings, Sessions, Certificates, Anomalies, Upload; filters, sort, detail panels, deep links, export, triage | browser E2E (RELIABILITY_REPORT.md) |
+| W | Interactive dashboard | FULL | React investigation workflow: Captures (history, re-analysis, compare), Overview, Findings (evidence chain, remediation), Sessions (timeline), Certificates (inventory), Timeline, Anomalies, Reports/export (raw or redacted; bundle; STIX) | scripted Playwright walkthrough (45 checks, 0 console errors) |
 
 Technically incorrect claims found in earlier documentation and corrected: TLS 1.3
 certificate extraction, "chain validation" (only leaf parsing existed), "AI-based" posture

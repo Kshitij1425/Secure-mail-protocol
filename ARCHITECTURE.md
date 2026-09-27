@@ -49,7 +49,9 @@ strictly passive: it never contacts a mail server and never decrypts traffic.
 | `scoring/` | Posture score 0-100 per capture and per dimension | Root-cause grouping, monotone prevalence ramp, INSUFFICIENT_EVIDENCE not scored, no sessions -> `Unknown` |
 | `ml/` | 10 features per TLS session, Isolation Forest fitted per capture | Fixed seed, capture-time reference, >= 5 sessions, `auto` threshold, batched scoring |
 | `core/orchestrator.py` | Runs the pipeline; builds fresh state per analysis | Session ids can be capture-prefixed for global uniqueness |
-| `reports/` | Canonical document + JSON/HTML (Jinja2 autoescape, CSP) / PDF (ReportLab, escaped) | Same document for CLI, API and reports |
+| `policy.py` | Policy profiles (balanced / strict / legacy_audit): key minimums, severity overrides, optional rules | `balanced` equals the pre-profile behaviour (tested) |
+| `reports/` | Canonical document (timeline, certificate inventory, remediation why/effect) + JSON/HTML (Jinja2 autoescape, CSP) / PDF (ReportLab, escaped), 14 sections | Same document for CLI, API and reports |
+| `reports/compare.py`, `redact.py`, `bundle.py`, `stix.py` | Analysis comparison; consistent pseudonymisation; deterministic evidence ZIP with SHA-256 manifest; STIX 2.1 observations | All derived from the stored document; nothing recomputed |
 | `api/` | REST API, persistence, report generation | See SECURITY_POLICY.md |
 | `cli.py` | `securemailscope analyze` | Same pipeline + reports as the API |
 
@@ -78,3 +80,11 @@ monotone, duplicate-invariant) are enforced by property-based tests.
   findings, scores and certificates (`tests/test_m12_api.py::test_engine_db_api_consistency`).
 * No data of capture A is returned for capture B (`test_capture_isolation`).
 * Credentials seen in plaintext AUTH are never stored (`test_credentials_never_persisted`).
+
+## Real capture lab (`lab/`)
+
+`real_mail_lab.py` runs real mail servers (Mailpit, aiosmtpd) and Python mail clients on
+loopback through `recording_relay.py`, which records the application bytes and writes them
+with reconstructed TCP/IP headers. `pki.py` issues the lab certificates. Output:
+`backend/tests/real_captures/*.pcap` + `manifest.json` (provenance, SHA-256, intended
+conditions). `lab/docker/` is an alternative with Postfix, Dovecot and tcpdump.

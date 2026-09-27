@@ -1,6 +1,6 @@
 # Demo Runbook
 
-Verified end-to-end in a browser on 2026-09-26 (Windows 11, Python 3.12.5, Node 24).
+Verified end-to-end in a browser on 2026-09-27 (Windows 11, Python 3.12.5, Node 24; scripted Playwright walkthrough, 45 checks).
 
 ## 1. Start
 
@@ -26,21 +26,35 @@ older schema is moved aside to `securemailscope.db.schema-v1-<timestamp>.bak`.
 
 ## 3. Walkthrough
 
-1. **Upload** -> choose a capture -> *Run analysis*. Invalid files are rejected with a message.
-2. **Overview**: score ring, packets/streams/sessions/TLS/certificates/ML counts, severity
-   counts, posture by dimension (coverage + evidence quality), prioritised remediation, top
-   findings. *Export* JSON / HTML / PDF downloads the report.
-3. **Findings**: search, severity filter, sort; click a finding -> evidence, frame numbers,
-   recommendation, references, triage status. Click the session link.
-4. **Sessions**: protocol filter; click a session -> TLS details, STARTTLS state, reassembly
-   quality, linked findings, certificate chain, ML assessment.
-5. **Certificates**: click -> validity at capture time, key/signature, SAN, chain linkage,
-   trust = unknown (not evaluated), sessions where seen.
-6. **Anomalies**: flagged outliers (toggle to show all evaluated sessions); click -> feature
-   vector and rareness explanation. Labelled as supplementary.
-7. Browser *Back* returns to the previous detail view; *Esc* or the close button closes it;
-   refreshing keeps the selection (it is in the URL).
-8. Switch captures in the top bar: every page shows only the selected capture's data.
+1. **Analyse a capture** (Tools) -> choose a file -> choose a policy profile -> *Run analysis*.
+   Invalid files are rejected with a message.
+2. **1 Captures**: history of every analysis (policy, score, severity counts). *Open* selects
+   an analysis; *Re-analyse* runs the same stored file under another profile (SHA-256 checked).
+3. **2 Overview**: score, counts, severity distribution, posture by dimension, remediation plan.
+4. **3 Findings**: search, severity filter, sort; click a finding -> remediation view (why it
+   matters, expected effect), evidence chain with OBSERVED / INFERRED / NOT OBSERVED labels,
+   frames, triage status.
+5. **4 Sessions**: filter, search, sort; click a session -> TLS details, STARTTLS state,
+   linked findings, certificate chain, ML assessment and the session timeline.
+6. **5 Certificates**: inventory of distinct certificates; filter; click -> extraction,
+   chain linkage and trust (not evaluated) shown separately; sessions where seen.
+7. **6 Timeline**: capture-time events with frame numbers; filter by session and event type.
+8. **7 Anomalies**: outliers "require investigation"; toggle to show all evaluated sessions.
+9. **8 Reports and export**: Raw or Redacted; PDF / HTML / JSON report, evidence bundle,
+   STIX 2.1; list of generated reports.
+10. Browser *Back* returns to the previous detail view; refreshing keeps the selection (URL).
+11. Utility strip: A / A+ / A++ text size and high contrast (remembered per browser).
+
+### Remediation story (real captures)
+
+Upload `backend/tests/real_captures/real_remediation_before.pcap` and
+`real_remediation_after.pcap`, tick both in **Captures**, *Compare selected*: the TLS 1.0 and
+expired RSA-1024 self-signed certificate findings on 10.77.0.50:587 appear as resolved.
+
+### Policy story
+
+Upload `real_smtp_tls10_legacy.pcap` with **Strict**, then *Re-analyse* it with **Legacy
+audit** and compare the two: the same observations produce different severities.
 
 ## 4. CLI alternative
 

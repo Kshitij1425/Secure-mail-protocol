@@ -1,4 +1,4 @@
-# Functional Regression Matrix (verified 2026-09-26)
+# Functional Regression Matrix (verified 2026-09-27)
 
 Status legend: **WORKING** = verified by unit + integration + real-capture (+ browser where applicable);
 **PARTIAL** = works with documented limits; **BROKEN/UNVERIFIED** = none remaining (see "Before" column
@@ -36,4 +36,11 @@ for the state found at takeover).
 | - | Report download from UI | Not present | `ReportExport` | - | `test_reports_all_formats` | PDF downloaded | WORKING |
 | - | Finding triage lifecycle | Not present | `PATCH /findings/{id}/status` | - | `test_finding_status_workflow` | yes | WORKING |
 
-Totals: 31 capability rows - 29 WORKING, 1 PARTIAL (trust anchors, by design), 1 UNVERIFIED (Docker).
+| - | Real mail server/client captures (controlled lab) | Not present | `lab/`, `tests/real_captures/` | - | `test_real_mail_captures.py` (21) | - | WORKING |
+| - | Policy profiles, re-analysis | Not present | `policy.py`, rules `_apply_profile` | `test_analyst_features.py` | real captures | upload + re-analyse | WORKING |
+| - | History and comparison | Not present | `reports/compare.py`, `/compare` | yes | remediation before/after | yes | WORKING |
+| - | Evidence chain, timeline, certificate inventory, remediation view | Not present | `document.py`, `analyzers.evidence_chain` | yes | real captures | yes | WORKING |
+| - | Redaction, evidence bundle, STIX 2.1 | Not present | `reports/redact.py`, `bundle.py`, `stix.py` | yes | yes | downloads verified | WORKING |
+| - | 14-section report | 10 sections | `report.html.j2`, `render.py` | `test_html_sections_present` | CLI | yes | WORKING |
+
+Totals: 37 capability rows - 35 WORKING, 1 PARTIAL (trust anchors, by design), 1 UNVERIFIED (Docker; the Docker mail lab was not run either).

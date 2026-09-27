@@ -43,6 +43,11 @@ hand an analyst a file) controls every byte the analyzer parses.
 | T14 | Misleading conclusions (e.g. "downgrade attack detected", "certificate trusted", TLS 1.3 certificates) | Evidence classes; explicit NOT_OBSERVED / UNKNOWN; trust never asserted | `test_tls13_certificates_not_claimed`, `test_no_email_traffic_is_unknown_not_excellent` |
 | T15 | SQL injection | ORM only; no string-built SQL (one static `SELECT 1`) | bandit, code review |
 | T16 | Command execution | No subprocess/shell in the product code | bandit, grep |
+| T17 | Identity disclosure through "redacted" outputs (report, bundle, STIX, download file name) | Pseudonyms applied to the whole document; download names of redacted outputs use `capture_<sha256 prefix>`, never the original file name | `test_redacted_outputs_hide_identities_keep_crypto`, `test_redacted_stix_export_is_valid_and_leaks_no_addresses`, `test_redacted_download_names_do_not_reveal_capture_filename`, Playwright scan of redacted downloads for private IPs |
+| T18 | Tampering with evidence bundles | Deterministic ZIP with per-file SHA-256 manifest and `manifest.sha256` | `test_analyst_features.py` bundle test |
+| T19 | Re-analysis of a substituted file | Stored file hash re-verified before re-analysis | `test_analyst_features.py` reanalyze test |
+| T20 | Invalid ids / policies on new endpoints (compare, chain, timeline, bundle, stix, reanalyze) | Typed parameters, 404 for unknown ids, 422 for unknown policy / equal compare ids / non-boolean `redact` | API tests; manual probes with traversal-style ids |
+| T21 | Overstated conclusions in exports (STIX indicators, "malicious", "AI detected") | STIX contains observed-data and notes only; ML wording "requires investigation" | `test_stix_export_is_valid_observation_only`, UI wording check |
 
 ## Residual risks (accepted, documented)
 

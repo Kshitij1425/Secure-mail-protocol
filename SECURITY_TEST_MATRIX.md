@@ -37,6 +37,10 @@ use Hypothesis: 150 examples per property in CI, 3000 in the deep campaign (`HYP
 | Reports | `<script>`, `<img onerror>` in filename/description | `test_html_escapes_untrusted_values` | Escaped + CSP |
 | Reports | ReportLab markup injection | `test_pdf_report_generated_and_escaped` | Escaped |
 | Reports | Report filename derivation from hostile names | `test_safe_report_basename` (6 cases) | Safe stems |
+| Exports | Redacted report / bundle / STIX leak addresses or file name | `test_redacted_outputs_hide_identities_keep_crypto`, `test_redacted_stix_export_is_valid_and_leaks_no_addresses`, `test_redacted_download_names_do_not_reveal_capture_filename` | No addresses, host names or file name |
+| Exports | Bundle integrity | bundle test in `test_analyst_features.py` | Byte-identical rebuild; hashes verify |
+| Exports | STIX validity / overstated claims | `test_stix_export_is_valid_observation_only` (stix2 parser) | Valid; no indicator/malware objects |
+| API | Unknown policy, equal compare ids, bad `redact`, traversal-style ids on new endpoints | `test_analyst_features.py`, manual probes | 422 / 404 |
 | Frontend | Unsafe HTML/URL sinks | grep for `dangerouslySetInnerHTML`, `innerHTML`, `eval`, `javascript:` | None; all values rendered as text |
 | Dependencies | Known CVEs | `pip-audit -r requirements.lock`, `npm audit` | 0 / 0 |
 | Static analysis | Python SAST | `bandit -r securemailscope` | 0 issues |

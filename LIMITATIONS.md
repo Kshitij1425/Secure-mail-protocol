@@ -1,4 +1,4 @@
-# Known Limitations (verified 2026-09-26)
+# Known Limitations (verified 2026-09-27)
 
 ## What passive analysis cannot establish
 
@@ -55,9 +55,39 @@ data reassembled from several segments, the frame is the one that made the data 
 * SQLite; databases created by pre-2.0 versions are moved aside to a `.bak` file on start.
 * Docker files are provided but were not built in the audit environment.
 
+## Policy profiles, comparison, redaction, exports
+
+* Policy profiles change thresholds and severities only; they are policy choices, not
+  calibrated risk models. `balanced` reproduces the behaviour of earlier releases exactly.
+* Comparison matches findings by rule and server (protocol, address, port). A server that
+  moved address appears as resolved + new.
+* Redaction pseudonymises IP addresses, host names, organisation names, e-mail addresses and
+  the file name. Certificate fingerprints, serial numbers and key parameters are kept on
+  purpose and can be looked up in public Certificate Transparency logs, which may re-identify
+  a public server. Redaction applies to the outputs, not to the stored database.
+* STIX 2.1 export contains observations and notes only. In redacted mode addresses are
+  pseudonyms, so sessions are described by a custom `x-securemailscope-redacted-session`
+  object instead of `ipv4-addr` / `network-traffic`; consumers that ignore custom objects see
+  only certificates and notes.
+* The evidence bundle contains analysis results and metadata, never packet payloads; it is not
+  a substitute for preserving the original capture.
+
+## User interface
+
+* The design follows public GIGW 3.0 accessibility conventions. The NTRO website that was
+  given as visual inspiration could not be reached from the build environment, so nothing was
+  derived from it; no government emblem, seal, logo or branding is used.
+* Browser verification is a scripted Playwright walkthrough plus manual review in Chromium;
+  other browsers and screen readers were not tested.
+
 ## Test data
 
-No real-world third-party mail captures were available. All fixtures contain TLS bytes
+No real-world third-party mail captures were available. Nine captures in
+`backend/tests/real_captures/` are real mail server/client sessions generated in a controlled
+test environment (Mailpit, aiosmtpd, Python clients) recorded by a TCP relay: application
+bytes are real, TCP/IP headers are reconstructed, and the server host name was replaced by a
+same-length placeholder in plaintext only (recorded in `manifest.json`). The lab has no IMAP
+server. The Docker lab with Postfix/Dovecot and tcpdump (`lab/docker/`) was not run. All other fixtures contain TLS bytes
 produced by OpenSSL 3.0.13 (real handshakes, certificates, encrypted records) wrapped in
 synthesised TCP/IP framing; one fixture (`smtp_tls12_3des_synthetic`) is fully hand-built
 because OpenSSL 3 cannot negotiate 3DES/RC4. See `backend/tests/robustness/fixture_factory.py`.

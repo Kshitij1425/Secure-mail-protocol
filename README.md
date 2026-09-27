@@ -21,7 +21,8 @@ decrypts traffic.
   capture time, key and signature strength, SAN, hostname vs SNI, chain linkage verified by
   signature. Trust is **not** asserted (no trust anchors are used). TLS 1.3 certificates are
   reported as encrypted / not observed.
-* **17 deterministic rules** (`backend/securemailscope/rules/engine.py`): plaintext sessions,
+* **17 deterministic rules + 1 optional** (`backend/securemailscope/rules/engine.py`; TLS-007
+  non-AEAD suite is enabled only by the strict profile): plaintext sessions,
   plaintext credentials, STARTTLS rejection / missing TLS / pipelining, deprecated protocol
   versions, handshake failure, insecure/weak suites, no forward secrecy, weak DH/curves,
   insecure client offers, expired / not-yet-valid / weak-key / weak-signature / self-signed /
@@ -32,6 +33,38 @@ decrypts traffic.
   grouping and a prioritised remediation plan. No email sessions -> `Unknown`, not 100.
 * **ML anomalies** (supplementary) - Isolation Forest fitted per capture; never changes findings
   or the score. See [ML_DESIGN.md](ML_DESIGN.md).
+
+## Analyst workflow
+
+The dashboard is an investigation workstation with a numbered workflow (Captures -> Overview ->
+Findings -> Sessions -> Certificates -> Timeline -> Anomalies -> Reports) plus *Analyse a
+capture* and *Compare analyses*.
+
+* **Policy profiles** - `balanced` (default, identical to earlier releases), `strict`
+  (RSA/DH >= 3072, TLS 1.0/1.1 CRITICAL, optional TLS-007) and `legacy_audit` (lower severities
+  for legacy estates). Chosen at upload or by re-analysing a stored capture; the profile is
+  recorded in every report.
+* **Analysis history and comparison** - every analysis is kept; two analyses can be compared
+  (new / resolved / persisting findings, matched by rule + protocol + server address:port),
+  e.g. before and after remediation.
+* **Evidence chain** per finding - capture -> frames -> session -> protocol -> TLS ->
+  certificate -> rule -> finding, each step labelled OBSERVED / INFERRED / NOT OBSERVED /
+  NOT OBSERVABLE.
+* **Timeline** - capture-time events (TCP open, STARTTLS, ClientHello/ServerHello, alerts,
+  findings at their evidence frame) with frame numbers; ML assessments are listed at analysis time.
+* **Certificate inventory** - distinct certificates with extraction, chain linkage and trust
+  reported separately (trust is never asserted).
+* **Remediation view** - why each finding matters and the expected effect of the fix.
+* **Exports** - 14-section JSON/HTML/PDF report, deterministic evidence bundle (ZIP + SHA-256
+  manifest, no payloads) and STIX 2.1 observations (no indicators). Each can be **raw** or
+  **redacted** (consistent pseudonyms for IPs, host names, organisations, e-mail addresses and
+  the file name; cryptographic evidence kept).
+* Accessibility: skip link, text size (A / A+ / A++), high-contrast mode, keyboard-operable
+  drawers, no horizontal scroll at 390 px.
+
+The visual design is original. It follows public GIGW 3.0 accessibility conventions; it uses
+no government emblem, seal, logo or branding, and SecureMailScope is **not** affiliated with,
+endorsed by or a product of NTRO or the Government of India.
 
 ## Quick start (Windows)
 
@@ -58,23 +91,32 @@ Exit codes: 0 ok, 2 file missing, 3 not a capture, 4 resource limit, 5 report fo
 
 ### API (selection)
 
-`POST /analyze` (multipart `file`) · `GET /captures[/{id}]` · `GET /captures/{id}/{sessions|findings|certificates|anomalies|posture|document}` ·
+`GET /policies` · `POST /analyze` (multipart `file`, optional `policy`) · `POST /captures/{id}/reanalyze?policy=` · `GET /captures[/{id}]` · `GET /captures/{id}/{sessions|findings|certificates|anomalies|posture|document}` ·
 `POST /captures/{id}/reports?format=json|html|pdf` · `GET /reports/{id}/download` ·
-`GET /sessions/{id}` · `GET /findings/{id}` · `PATCH /findings/{id}/status` · `GET /certificates/{id}` · `GET /anomalies/{id}`.
+`GET /sessions/{id}` · `GET /findings/{id}` · `GET /findings/{id}/chain` · `PATCH /findings/{id}/status` · `GET /certificates/{id}` · `GET /anomalies/{id}` ·
+`GET /captures/{id}/{timeline|certificate-inventory}` · `GET /captures/{id}/{bundle|stix|document}?redact=true|false` ·
+`GET /compare?a=&b=`. Reports accept `redact=true`.
 Interactive docs at `/docs`.
 
 ## Testing
 
 ```powershell
 cd backend
-python -m pytest -q                                  # 329 tests incl. fuzz/property tests
+python -m pytest -q                                  # 368 tests incl. fuzz/property tests
 python -m tests.robustness.validate_fixtures         # 28 captures vs ground truth
 $env:HYPOTHESIS_PROFILE="deep"; python -m pytest tests/test_fuzz_properties.py   # long fuzz run
 python -m tests.performance.benchmark --sizes 1000 10000 100000
 ```
 
 The fixture corpus (`backend/tests/robustness/fixture_factory.py`) uses real OpenSSL TLS
-handshakes wrapped in synthesised TCP framing; see [LIMITATIONS.md](LIMITATIONS.md).
+handshakes wrapped in synthesised TCP framing. In addition, `backend/tests/real_captures/`
+holds 9 captures of **real mail server/client sessions generated in a controlled test
+environment** (Mailpit 1.31.2 and aiosmtpd with Python smtplib/poplib clients, recorded by a
+TCP relay: application bytes are real, TCP/IP headers are reconstructed). Provenance and
+intended conditions are in `manifest.json`; `tests/test_real_mail_captures.py` checks them.
+Reproduce with `python lab/real_mail_lab.py` (see [lab/README.md](lab/README.md)). A Docker
+lab with Postfix, Dovecot and tcpdump is provided in `lab/docker/` but was not run here.
+See [LIMITATIONS.md](LIMITATIONS.md).
 
 ## Documentation
 
